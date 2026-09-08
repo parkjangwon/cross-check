@@ -106,6 +106,16 @@ For each material API/behavior change:
 4. If semantic resolution is unavailable, explicitly say so and lower confidence.
 5. For a bug fix, inspect sibling callers before declaring the root cause fixed.
 
+**Broadly-referenced names are handled separately.** The extractor suppresses the
+per-file caller samples for symbols that match across a large share of the
+codebase (e.g. a common helper, framework hook, or a language builtin surfaced by
+symbol extraction). For such names a call site list would be noise, not evidence:
+do **not** treat their absence as "no callers to check". If you genuinely suspect
+a contract drift on a changed commonly-used name, run
+`git grep -n -w "<name>"` yourself and reason about the specific high-value
+callers (security-sensitive, hot paths). Do not claim blast radius is clear for a
+name the extractor flagged as broadly referenced.
+
 ## 🚦 Deterministic Verdict Policy
 
 Use exactly one verdict:

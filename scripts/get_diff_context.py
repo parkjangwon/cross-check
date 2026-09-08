@@ -125,6 +125,57 @@ def has_commit(ref="HEAD"):
     )
     return res.returncode == 0
 
+
+# If a modified symbol's textual matches span more than this fraction of the
+# repository's code files (or exceed this hard ceiling of distinct files), it
+# is almost certainly a language builtin, a shared util, or a framework/common
+# name — listing its callers would flood the report with noise and burn the
+# very tokens this tool exists to save. In that case we downgrade the symbol to
+# a concise "broadly referenced name" note instead of sampling dozens of files.
+BROAD_SYMBOL_FILE_RATIO = 0.30          # >=30% of code files reference it
+BROAD_SYMBOL_MIN_FILES = 12             # ...and at least 12 distinct files
+BROAD_SYMBOL_HARD_CAP = 40              # never list per-file callers beyond 40
+
+
+def count_code_files(git_root):
+    """Count source files in the repo (post ignore/code filtering). Cheap via git ls-files."""
+    # Use subprocess directly (not run_command) so a non-git dir degrades to None
+    # instead of exiting the whole tool.
+    try:
+        res = subprocess.run(
+            ["git", "ls-files"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=git_root,
+        )
+    except Exception:
+        return None
+    if res.returncode != 0:
+        return None
+    n = 0
+    for f in res.stdout.splitlines():
+        if not is_ignored(f) and is_code_file(f):
+            n += 1
+    return n or None
+
+
+def is_broadly_referenced(sym, caller_files, total_code_files):
+    """
+    Decide whether a symbol is too widely referenced to be a useful blast-radius
+    target. `caller_files` is the list of distinct files holding textual matches.
+    """
+    if not caller_files:
+        return False
+    distinct = len(set(caller_files))
+    if distinct >= BROAD_SYMBOL_HARD_CAP:
+        return True
+    if total_code_files:
+        return distinct >= max(BROAD_SYMBOL_MIN_FILES, round(total_code_files * BROAD_SYMBOL_FILE_RATIO))
+    return distinct >= BROAD_SYMBOL_MIN_FILES
+
 def build_diff_command(args, git_root):
     """Build git diff command based on user options."""
     cmd = ["git", "diff", "--no-color", "--unified=3"]
@@ -319,6 +370,8 @@ def extract_modified_symbols(git_root, file_path, diff_content):
 
 def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_sym=8):
     """Find external caller sites in the repository for modified methods."""
+    total_code_files = count_code_files(git_root)
+
     symbol_to_source = {}
     for file_path, diff_content in filtered_files.items():
         if not is_code_file(file_path):
@@ -354,6 +407,7 @@ def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_s
 
             lines = grep_res.stdout.splitlines()
             callers = []
+            caller_files = []
             for l in lines:
                 parts = l.split(":", 2)
                 if len(parts) >= 3:
@@ -364,14 +418,27 @@ def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_s
                     if is_ignored(caller_file):
                         continue
                     callers.append((caller_file, line_no, content))
+                    caller_files.append(caller_file)
 
-            if callers:
-                blast_radius[sym] = {
-                    "source_file": source_file,
-                    "total_callers": len(callers),
-                    "samples": callers[:max_callers_per_sym]
-                }
-                tested_count += 1
+            if not callers:
+                continue
+
+            # A symbol matched across most of the codebase is almost certainly a
+            # language builtin or an overbroad shared name (e.g. `String`) — not
+            # a change whose callers we can meaningfully audit. Downgrade it to a
+            # one-line note instead of flooding the report with dozens of samples,
+            # which would consume exactly the tokens this tool exists to save.
+            broad = is_broadly_referenced(sym, caller_files, total_code_files)
+            entry = {
+                "source_file": source_file,
+                "total_callers": len(callers),
+                "distinct_files": len(set(caller_files)),
+                "broad": broad,
+            }
+            if not broad:
+                entry["samples"] = callers[:max_callers_per_sym]
+            blast_radius[sym] = entry
+            tested_count += 1
         except Exception:
             continue
 
@@ -522,7 +589,15 @@ def main():
             print("> Audit these call sites for return contract drift, unhandled nulls, or broken assumptions:\n")
             for sym, data in blast_radius.items():
                 print(f"### Method `{sym}()` (defined in `{data['source_file']}`)")
-                print(f"- Found {data['total_callers']} external call site(s) across repository:")
+                if data.get("broad"):
+                    # Overbroad name: skip per-file samples, they'd drown the report.
+                    print(f"- Broadly referenced across the codebase "
+                          f"({data['distinct_files']} file(s) / {data['total_callers']} mention(s)); "
+                          f"likely a common/shared name. Not listing individual callers — "
+                          f"this name is too generic to trace a contract drift to a single caller.")
+                    print()
+                    continue
+                print(f"- Found {data['total_callers']} external call site(s) across {data['distinct_files']} file(s):")
                 for caller_file, line_no, snippet in data["samples"]:
                     print(f"  - `{caller_file}:L{line_no}`: `{snippet}`")
                 if data["total_callers"] > len(data["samples"]):

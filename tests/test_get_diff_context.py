@@ -139,6 +139,72 @@ diff --git a/package-lock.json b/package-lock.json
         self.assertFalse(module.is_code_file("README.md"))
         self.assertFalse(module.is_code_file("config.yaml"))
 
+    def test_count_code_files_safely_returns_none_outside_git(self):
+        # count_code_files must degrade to None (not exit) when the dir is not
+        # a git worktree — a non-code temp dir is the perfect non-git case.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(module.count_code_files(tmp))
+
+    def test_is_broadly_referenced_threshold(self):
+        # Many distinct files -> broad (suppress per-file listing).
+        many = [f"dir{i}/mod.py" for i in range(50)]
+        self.assertTrue(module.is_broadly_referenced("String", many, total_code_files=120))
+        # Small, meaningful call set -> keep detailed samples.
+        few = [f"src/main/ipc/{i}.ts" for i in range(3)]
+        self.assertFalse(module.is_broadly_referenced("runHooks", few, total_code_files=120))
+        # Empty set never broad.
+        self.assertFalse(module.is_broadly_referenced("x", [], total_code_files=120))
+        # Unknown repo size (None) still applies the hard floor of 12 files.
+        eleven = [f"f{i}.ts" for i in range(11)]
+        twelve = [f"f{i}.ts" for i in range(12)]
+        self.assertFalse(module.is_broadly_referenced("x", eleven, total_code_files=None))
+        self.assertTrue(module.is_broadly_referenced("x", twelve, total_code_files=None))
+
+    def test_blast_radius_flags_broad_symbol_but_drops_samples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "service.py").write_text("def util():\n    return None\n", encoding="utf-8")
+            diff = """diff --git a/service.py b/service.py
+--- a/service.py
++++ b/service.py
+@@ -1 +1 @@
+-def util():
++def util():
+"""
+            files = {"service.py": diff}
+            grab_all = "\n".join(f"c{i}.py:1: x.utils()\n" for i in range(60))
+            class FakeResult:
+                returncode = 0
+                stdout = grab_all
+                stderr = ""
+            with patch.object(module.subprocess, "run", return_value=FakeResult()):
+                radius = module.find_blast_radius(tmp, files)
+            self.assertIn("util", radius)
+            self.assertTrue(radius["util"]["broad"])
+            self.assertNotIn("samples", radius["util"])
+
+    def test_blast_radius_keeps_samples_for_local_symbol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "service.py").write_text("def process():\n    return None\n", encoding="utf-8")
+            diff = """diff --git a/service.py b/service.py
+--- a/service.py
++++ b/service.py
+@@ -1 +1 @@
+-def process():
++def process():
+"""
+            files = {"service.py": diff}
+            class FakeResult:
+                returncode = 0
+                stdout = "caller.py:12: process('x')\ncaller2.py:4: process(1)\n"
+                stderr = ""
+            with patch.object(module.subprocess, "run", return_value=FakeResult()):
+                radius = module.find_blast_radius(tmp, files)
+            self.assertIn("process", radius)
+            self.assertFalse(radius["process"]["broad"])
+            self.assertEqual(len(radius["process"]["samples"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

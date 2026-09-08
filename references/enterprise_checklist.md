@@ -1,114 +1,107 @@
 # Enterprise Universal Invariants & Cross-Check Checklist
 
-This checklist applies to **any programming language** (Java, Go, C/C++, Rust, Python, TypeScript/JavaScript, etc.) in enterprise on-premise environments.
+Cross-Check is a **diff-scoped safety gate**, not a full-project SAST. Start with changed hunks and expand context only when needed to prove impact.
 
-Enterprise software deployed on-premise has an asymmetric risk profile: a crash, leak, or regression cannot be patched silently with a hot reload. Every defect requires emergency customer engineering, hotfixes, and audit explanations.
+Every finding must be evidence-based and assigned a confidence level:
 
----
+- **HIGH** — directly demonstrated by the diff/context.
+- **MEDIUM** — strong evidence, but runtime/framework behavior or an unseen path could change the outcome.
+- **LOW** — plausible concern that cannot be established from available context.
 
-## 🧭 The 6 Universal Enterprise Invariants
-
-Every code modification must satisfy these 6 universal invariants regardless of language or framework:
-
-```
-                  ┌──────────────────────────────────────────────┐
-                  │ 1. Resource Lifecycle (Never Leak)           │
-                  │ 2. Concurrency & State (Never Race/Deadlock) │
-                  │ 3. Memory & Pointer Safety (Never Crash)     │
-                  │ 4. Error & Transaction Integrity (No Swallow)│
-                  │ 5. Trust Boundary Security (Zero Injection)  │
-                  │ 6. Simplicity & YAGNI (No Over-Engineering)  │
-                  └──────────────────────────────────────────────┘
-```
+LOW-confidence observations must never block a review. When framework/language semantics are unclear, lower confidence rather than guessing.
 
 ---
 
-### 1. Resource Lifecycle & Leak Prevention (`leak:`)
-*Applies to: file descriptors, sockets, DB connections, thread/goroutine pools, memory, UI subscriptions.*
+## 1. Resource Lifecycle & Leak Prevention (`leak:`)
 
-- **Deterministic Cleanup**: Are all allocatable OS resources deterministically freed in every exit path (normal return, early return, error, panic/exception)?
-  - E.g., `try-with-resources` (Java), `defer close()` (Go), RAII/smart pointers (C++/Rust), `with` statements (Python), `finally`/destructor hooks (JS/TS/Vue).
-- **Background Worker & Coroutine Leaks**: Do newly spawned threads, goroutines, or async background tasks have guaranteed termination triggers, timeouts, or cancellation tokens (`context.Context`, `AbortController`)?
-- **Thread-Local / Context Leaks**: In pooled execution environments (e.g., HTTP worker pools), are thread-local or request-scoped stores cleanly purged in `finally`/`defer` blocks?
-- **Client/UI Cleanup**: Are global event listeners, timers, web sockets, and 3rd-party library instances unregistered on component teardown/unmount?
+- Are files, sockets, DB connections, streams, executors, goroutines/tasks, listeners, timers, and request/thread-local state cleaned up deterministically on success and failure paths?
+- Do newly spawned workers/tasks have a clear owner, termination condition, timeout, or cancellation mechanism?
+- Are pooled resources returned rather than merely dereferenced?
+- Do component/UI subscriptions and timers unregister during teardown?
+- Do not report a leak merely because explicit cleanup is absent when ownership is clearly managed by RAII, try-with-resources, a context manager, or a framework lifecycle.
+
+## 2. Concurrency, Race Conditions & Deadlocks (`race:`)
+
+- Is shared mutable state protected by the correct synchronization primitive?
+- Are check-then-act operations atomic where required?
+- Are locks acquired in a consistent order?
+- Is blocking I/O or network work performed while holding a lock?
+- Do singleton services (for example Spring `@Component`) introduce mutable instance state accessed by concurrent requests?
+- Are async tasks, callbacks, channels, and cancellation paths correctly owned?
+
+## 3. Pointer, Null & Boundary Safety (`npe:`, `nil:`, `crash:`)
+
+- Can nullable/optional/external values be dereferenced without validation?
+- Can implicit conversions or unboxing trigger runtime exceptions?
+- Can arrays, slices, lists, or buffers be accessed outside valid bounds?
+- Can unsafe/raw casts bypass a meaningful type or validation boundary?
+- Is an error/panic path reachable from malformed input or an unexpected state?
+
+## 4. Error Handling & Transaction Integrity (`swallow:`, `panic:`)
+
+- Are errors/exceptions ignored, swallowed, or reduced to a log message without appropriate recovery or propagation?
+- Is the original cause preserved when wrapping/rethrowing?
+- Did the change alter exception/error behavior without updating callers?
+- Are DB and distributed-operation transactions rolled back on failure according to actual framework semantics?
+- Are async promise/task errors observed and handled?
+
+## 5. Security & Trust Boundaries (`sec:`, `sqli:`, `xss:`, `priv:`)
+
+- Are SQL/LDAP/command/template/query expressions constructed through unsafe concatenation?
+- Are filesystem paths canonicalized/validated against an allowed base directory where required?
+- Are credentials, tokens, secrets, or PII exposed through logs, errors, telemetry, or client bundles?
+- Did the change bypass authentication, authorization, rate limits, CSRF protections, or other security middleware/interceptors?
+- Did a trust boundary lose input validation or output encoding?
+
+## 6. Over-Engineering & YAGNI (`yagni:`, `stdlib:`, `shrink:`, `delete:`)
+
+YAGNI findings are quality suggestions, not blockers by themselves.
+
+- Is an abstraction genuinely unused beyond one implementation, or does it represent a real DI/test/domain boundary?
+- Was a dependency added for functionality already provided by the standard library/runtime?
+- Were speculative configuration switches or extension points added without a current consumer?
+- Are pass-through layers adding no business, security, transaction, or lifecycle behavior?
+- Can the same behavior be made materially smaller without reducing safety or clarity?
+
+**Do not call an abstraction YAGNI solely because it has one current implementation.** Consider dependency injection, testing seams, framework contracts, plugin boundaries, and domain ownership first.
+
+## 7. Blast Radius & Caller Contract Drift (`caller:`)
+
+- Did return nullability change?
+- Did a precondition become stricter?
+- Did a new exception/error status appear?
+- Did side effects, mutation, transaction boundaries, thread/context assumptions, or ordering change?
+- Did a bug fix protect one caller while sibling callers remain exposed?
+- Is a textual search result actually an invocation, or merely a definition/reference?
+
+Caller discovery tools such as `git grep` are **candidate discovery only**. Reflection, generated code, dynamic dispatch, DI wiring, and framework proxies may require manual reasoning or language-aware tooling.
 
 ---
 
-### 2. Concurrency, Race Conditions & Deadlocks (`race:`)
-*Applies to: multi-threaded, asynchronous, or multi-process systems.*
+## 🚦 Verdict Mapping
 
-- **Shared Mutable State**: Is shared mutable state protected by appropriate primitives (mutex, atomic operations, channel/actor isolation)?
-- **Lock Contention & Granularity**: Is I/O or network communication performed while holding a lock? Are locks acquired in a consistent global order across all call paths to prevent deadlocks?
-- **Framework Singletons**: In singleton services (e.g., Spring `@Component`, NestJS, Go package singletons), are mutable instance variables introduced that multiple concurrent requests can mutate?
-- **Check-Then-Act (TOCTOU)**: Are there non-atomic check-then-modify patterns (e.g., check file existence then create, check balance then withdraw)?
+| Verdict | Required condition |
+| :--- | :--- |
+| 🔴 **BLOCKED** | At least one HIGH-confidence production-significant security, crash, leak, race/deadlock, data-corruption, or caller-contract defect. |
+| 🟡 **CONDITIONAL PASS** | No HIGH blocker, but at least one MEDIUM-confidence credible safety/security/stability/contract risk remains. |
+| 🟢 **PASS** | No HIGH/MEDIUM safety or security findings. LOW findings and subjective style preferences do not block. |
 
----
-
-### 3. Pointer, Null & Boundary Safety (`npe:`, `crash:`)
-*Applies to: all languages with nullable references, pointers, or dynamic typings.*
-
-- **Null/Nil Dereference**: Is every optional, nullable, or external input guarded before access?
-- **Implicit Conversions & Unboxing**: Can automatic unboxing (e.g., Java `Integer` to `int`) or type coercion lead to unexpected panics or runtime exceptions?
-- **Boundary & Index Checks**: Are array, slice, or collection accesses (`arr[0]`, `list.get(0)`) preceded by length/emptiness checks?
-- **Type Bypass Risks**: Is `any`, `unsafe`, raw pointer casting, or blind optional chaining (`?.`) used to suppress type errors, concealing invalid runtime states?
-
----
-
-### 4. Error Handling & Transaction Integrity (`swallow:`, `panic:`)
-*Applies to: error propagation, rollback mechanisms, and logging.*
-
-- **No Error Swallowing**: Are catch/error blocks empty or merely logging without properly handling, rolling back, or re-throwing?
-- **Root Cause Preservation**: When wrapping or re-throwing errors, is the original cause preserved in the error chain/stack trace?
-- **Transaction Rollback**: If a database transaction or distributed operation fails, is rollback guaranteed (e.g., checking transaction rollback rules for checked vs unchecked exceptions)?
-- **No Uncaught Async Rejections**: Are all promises, async tasks, and channels monitored for error states?
-
----
-
-### 5. Security & Trust Boundaries (`sec:`, `sqli:`, `xss:`, `priv:`)
-*Applies to: inputs from users, APIs, external config files, and network peers.*
-
-- **Injection Vectors**: Are commands, SQL queries, LDAP searches, or shell calls constructed via string concatenation rather than parameterized APIs?
-- **Path Traversal**: Are file paths validated, canonicalized, and restricted to an allowed base directory before filesystem operations?
-- **Credential & PII Exposure**: Are secrets, tokens, passwords, or personal identifiable information (PII) printed to logs, console, or client-side bundles?
-- **Authentication & Authorization Bypasses**: Does the modified path bypass any permission checks, security interceptors, or rate limiters?
-
----
-
-### 6. Over-Engineering & YAGNI (`yagni:`, `stdlib:`, `shrink:`, `delete:`)
-*Applies to: AI-generated code bloat, premature abstraction, and unnecessary dependencies.*
-
-- **Single-Implementation Abstractions**: Has an interface, abstract base class, or generic factory been added when only one concrete implementation exists?
-- **Dependency Bloat**: Has a new external library or package been introduced for logic that the standard library or 3 lines of native code can solve?
-- **Dead Flexibility**: Are there configuration flags that no one will configure, or unused extension points built for hypothetical future needs?
-- **Pass-Through Layers**: Are there redundant layers (e.g., Controller -> Facade -> Service -> Manager -> DAO) that simply forward calls without adding real business logic?
-
----
-
-### 7. Blast Radius & Caller Contract Drift (`caller:`)
-*Applies to: any method or function whose signature, return value, or side-effects have changed.*
-
-- **Nullable Return Drift**: Did the modified method change to return `null`, `nil`, or `undefined` (e.g., on error or timeout)? Do existing callers immediately invoke methods on the returned value without a null check? (Triggers NPE in caller).
-- **Precondition Tightening**: Did the method introduce stricter input validation (e.g., non-null, minimum length, non-empty)? Will existing callers that pass edge cases crash or fail silently?
-- **Error & Exception Drift**: Did the method start throwing a new exception or returning a new error status that callers do not catch?
-- **Sibling Blindness**: If this modification fixes a bug experienced by caller A, are sibling callers B and C still broken or passing outdated argument formats?
-- **Side-Effect / State Mutation Drift**: Did the method change whether it mutates input arguments in place or relies on a specific execution thread/context?
+YAGNI, formatting, naming, and subjective refactoring preferences **must not** produce BLOCKED.
 
 ---
 
 ## 🏷️ Standard Tag Reference
 
-Use these concise tags in the Quick Scan section:
-
 | Tag | Category | Description |
 | :--- | :--- | :--- |
 | `crash:` / `panic:` | Stability | Process crash, uncaught exception, panic, out-of-bounds |
-| `leak:` | Resource | FD, socket, DB connection, memory, listener leak |
-| `npe:` / `nil:` | Safety | Null/Nil pointer dereference, undefined property access |
-| `caller:` | Blast Radius | Caller contract drift, unhandled null return at call site |
+| `leak:` | Resource | FD, socket, DB connection, memory, listener, worker/task leak |
+| `npe:` / `nil:` | Safety | Null/Nil dereference or undefined property access |
+| `caller:` | Blast Radius | Caller contract drift or unhandled changed behavior |
 | `race:` | Concurrency | Race condition, non-atomic operation, deadlock hazard |
 | `swallow:` | Error Handling | Silently ignored error/exception, lost cause, missing rollback |
-| `sec:` / `sqli:` / `xss:` | Security | Injection, path traversal, auth bypass, secret in log |
-| `yagni:` | Complexity | Speculative abstraction, single-impl interface, unused params |
-| `stdlib:` / `native:` | Minimalism | Hand-rolled code replaceable by language standard library |
-| `shrink:` | Conciseness | Same logic achievable with fewer, clearer, more idiomatic lines |
-| `delete:` | Dead Code | Obsolete code, redundant check, unused artifact |
+| `sec:` / `sqli:` / `xss:` | Security | Injection, path traversal, auth bypass, secret exposure |
+| `yagni:` | Complexity | Speculative abstraction, unnecessary flexibility |
+| `stdlib:` / `native:` | Minimalism | Hand-rolled logic replaceable by standard library/runtime |
+| `shrink:` | Conciseness | Same safe logic achievable with fewer, clearer lines |
+| `delete:` | Dead Code | Obsolete or redundant code/artifact |

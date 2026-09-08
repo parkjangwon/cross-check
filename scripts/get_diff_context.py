@@ -272,6 +272,8 @@ def extract_enclosing_function_from_file(file_path, line_number, func_patterns):
 
 def extract_modified_symbols(git_root, file_path, diff_content):
     """Extract candidate function/method names modified in diff."""
+    if not is_code_file(file_path):
+        return []  # docs/config/data files never define methods to trace
     candidates = set()
 
     hunk_header_re = re.compile(r"^@@\s+-([0-9]+)(?:,[0-9]+)?\s+\+([0-9]+)(?:,[0-9]+)?\s+@@\s*(.*)$")

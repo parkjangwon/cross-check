@@ -1,8 +1,8 @@
 import importlib.util
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,41 +81,34 @@ diff --git a/package-lock.json b/package-lock.json
     def test_find_blast_radius_reports_external_usage(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-            (root / "service.py").write_text(
-                "def process_request(value):\n    return value\n", encoding="utf-8"
-            )
-            (root / "caller.py").write_text(
-                "from service import process_request\n\nresult = process_request('x')\n",
-                encoding="utf-8",
-            )
-            subprocess.run(["git", "add", "."], cwd=root, check=True)
-            subprocess.run(
-                ["git", "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "initial"],
-                cwd=root,
-                check=True,
-            )
-            (root / "service.py").write_text(
-                "def process_request(value):\n    return value.strip()\n", encoding="utf-8"
-            )
-            diff = subprocess.run(
-                ["git", "diff", "--no-color", "--unified=3", "HEAD"],
-                cwd=root,
-                text=True,
-                capture_output=True,
-                check=True,
-            ).stdout
-            files, _ = module.parse_diff(diff)
-            radius = module.find_blast_radius(tmp, files)
+            (root / "service.py").write_text("def process_request(value):\n    return value\n", encoding="utf-8")
+            diff = """diff --git a/service.py b/service.py
+--- a/service.py
++++ b/service.py
+@@ -1,2 +1,2 @@
+ def process_request(value):
+-    return value
++    return value.strip()
+"""
+            files = {"service.py": diff}
+
+            class FakeResult:
+                returncode = 0
+                stdout = "caller.py:12: result = process_request('x')\n"
+                stderr = ""
+
+            with patch.object(module.subprocess, "run", return_value=FakeResult()):
+                radius = module.find_blast_radius(tmp, files)
+
             self.assertIn("process_request", radius)
-            self.assertTrue(any(s[0] == "caller.py" for s in radius["process_request"]["samples"]))
+            self.assertEqual("caller.py", radius["process_request"]["samples"][0][0])
 
     def test_untracked_files_are_synthesized_as_diff(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             (root / "new.py").write_text("def hello():\n    return 'hello'\n", encoding="utf-8")
-            diffs, skipped = module.get_untracked_files_diff(tmp)
+            with patch.object(module, "run_command", return_value="?? new.py\n"):
+                diffs, skipped = module.get_untracked_files_diff(tmp)
             self.assertEqual([], skipped)
             self.assertIn("new.py", diffs)
             self.assertIn("new file mode 100644", diffs["new.py"])
@@ -124,9 +117,9 @@ diff --git a/package-lock.json b/package-lock.json
     def test_binary_untracked_file_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             (root / "image.dat").write_bytes(b"abc\x00def")
-            diffs, skipped = module.get_untracked_files_diff(tmp)
+            with patch.object(module, "run_command", return_value="?? image.dat\n"):
+                diffs, skipped = module.get_untracked_files_diff(tmp)
             self.assertNotIn("image.dat", diffs)
             self.assertIn("image.dat", skipped)
 

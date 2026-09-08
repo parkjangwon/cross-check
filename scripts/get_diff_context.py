@@ -596,7 +596,7 @@ def build_commit_profile(filtered_files, stats, total_add, total_del, total_line
         f"- **Files**: {n_files} ({total_add}+/ {total_del}-, ~{total_lines} diff lines)\n"
         f"- **Shape**: {kind_summary or 'unknown'}"
         + (f"\n- **Blast hints**: {len(blast_radius) if blast_radius else 0} candidate symbol(s), "
-           f"{broad_syms} broadly-referenced, ~{caller_files_est} caller-file mention(s)" if blast_radius else "")
+           f"{broad_syms} broadly-referenced, ~{caller_files_est} caller-file mention(s) (bounded to this repository)" if blast_radius else "")
         + note
         + f"\n"
     )

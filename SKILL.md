@@ -161,9 +161,12 @@ Caller discovery is a **candidate generator, not proof**. `git grep` finds textu
    - Trace callers **only** within the relevant subsystem, interface, or caller blast radius. Do not pollute the report with unrelated callers that happen to share a common name.
 3. **Inspect Contract Drift**:
    - Distinguish benign calls from genuine contract breakage (e.g. caller dereferencing a newly-nullable return, unhandled exceptions, stricter preconditions).
-4. **Broadly-referenced names are handled separately**:
+4. **Cross-Repository & Submodule Boundaries**:
+   - Note: Automated caller search is bounded to the current repository root.
+   - If a diff modifies **shared cross-service contracts** (e.g. HTTP headers like `X-AR-*`, shared event schemas, DB columns, RPC contracts, public API types), check sibling submodules/repos for consumers (e.g. grep across sibling directories if accessible) or explicitly alert the human reviewer about the cross-repo boundary in the report.
+5. **Broadly-referenced names are handled separately**:
    - The extractor suppresses per-file caller samples for symbols matching across many files. For such names, do not treat their absence as "no callers". If you suspect contract drift, run targeted searches on high-value paths.
-5. **If semantic resolution is unavailable**, explicitly say so and lower confidence rather than guessing.
+6. **If semantic resolution is unavailable**, explicitly say so and lower confidence rather than guessing.
 
 ## 🚦 Deterministic Verdict Policy
 

@@ -51,6 +51,42 @@ Every finding MUST be evidence-based and tagged **HIGH**, **MEDIUM**, or **LOW**
 
 Do not infer a defect solely because a pattern looks unusual. Explain the concrete path from changed code to impact.
 
+## 🧭 Reviewer UX: read the intent, pick the scope yourself
+
+The **human** should never have to remember commands or flags. They will invoke
+this skill with a bare word or a sentence — `/cross-check`, "크로스체크",
+"방금 커밋 줘", "이 diff 검증", "지난 PR 걸어". *You* are the one who turns
+that into a concrete invocation. Follow this decision routine and don't ask the
+user to disambiguate unless two scopes are genuinely plausible.
+
+```
+1. RUN WHAT CHANGED FIRST
+   git status --porcelain
+   - If there are uncommitted/staged changes → audit them (working-tree default).
+   - If the tree is clean → you have nothing to diff; run against the most
+     relevant recent commit/range instead (e.g. HEAD~1 or a just-mentioned PR).
+
+2. PICK SCOPE FROM THE SENTENCE
+   - Mentions a commit/PR/branch/file? → that object (--commit / --range / --file).
+   - Says "전체/다 봐줘 / 커밋 통째 / 크게" → audit mode = show the FULL diff.
+   - Says "짧게/대충/스킵할 것 골라만" → cap is OK (working-tree default already
+     caps; for a commit use --strict-cap).
+
+3. READ THE CHANGE PROFILE FIRST (it prints at the very top)
+   - Profile shows files / +/- / shape / blast hints. Decide read-in-full vs
+     narrow with --file <path> on that basis — not on raw line count alone.
+   - Big ≠ abnormal. Config/test/refactor churn may be skimmable; real logic in a
+     small file may need the full read.
+
+4. NEVER make the human pass a flag they didn't ask for. If you chose an
+   unusual scope (commit override, --strict-cap, --no-truncate) just note it in
+   one line of the report so they can object — don't make them choose first.
+```
+
+The **Change Profile header + audit (full-read) default** means a single bare
+invocation already gives you enough to triage correctly. Prefer default behavior
+to exotic flags.
+
 ## 🛠️ Step 1: Extract Diff Context
 
 Execute the bundled diff extractor or standard git commands:

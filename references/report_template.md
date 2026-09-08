@@ -1,8 +1,6 @@
 # Cross-Check Review Report Format
 
-Review responses must avoid generic filler prose and follow this standardized, high-density reporting template.
-
----
+Review responses must be concise, evidence-based, and actionable. Do not manufacture certainty.
 
 ```markdown
 # 🛡️ Cross-Check Security & Stability Review
@@ -10,49 +8,85 @@ Review responses must avoid generic filler prose and follow this standardized, h
 - **Target Scope**: [Working Tree | Staged | Commit <hash> | Range <base>..<head>]
 - **Audited Files**: N file(s)
 - **Scoreboard**: 🚨 [X] Critical | ⚠️ [Y] Warning | 🧹 [Z] YAGNI | net: [-N lines possible]
-- **Verdict**: [ 🔴 BLOCKED | 🟡 CONDITIONAL PASS | 🟢 PASS (Solid & Lean. Clean to ship.) ]
+- **Confidence**: HIGH [X] | MEDIUM [Y] | LOW [Z]
+- **Verdict**: [ 🔴 BLOCKED | 🟡 CONDITIONAL PASS | 🟢 PASS ]
 
 ---
 
-## ⚡ Quick Scan (One-Line Tagged Findings)
-> Format: `<file>:L<line>: <tag> <what's wrong>. <immediate fix>.`
+## ⚡ Quick Scan
 
-- `SecurityManager.java:L42-55: leak: InputStream not closed on IOException. try-with-resources, 1 line.`
-- `auth_service.go:L78: race: concurrent write to session map without mutex. sync.RWMutex or sync.Map.`
-- `AuthFilter.java:L89: caller: calls validateToken() which now returns null on timeout. NPE at caller L91.`
-- `UserDataHandler.ts:L110: npe: blind unboxing without null check. Guard before property access.`
-- `ConfigLoader.py:L35: swallow: except Exception ignores error. Log cause and propagate or rollback.`
-- `RuleEngine.java:L12-70: yagni: AbstractRuleEngine with 1 impl. Inline directly, delete 40 lines.`
+> Format: `<file>:L<line>: <tag> [HIGH|MEDIUM|LOW] <what's wrong>. <immediate fix>.`
+
+- `SecurityManager.java:L42-55: leak: [HIGH] InputStream escapes without deterministic close on error. Use try-with-resources.`
+- `AuthService.java:L89: caller: [MEDIUM] timeout now returns null; caller L91 dereferences it. Guard or preserve the previous contract.`
+- `RuleEngine.java:L12-70: yagni: [LOW] abstraction appears to have one consumer. Verify DI/test/plugin boundary before removing.`
+
+If clean:
+`None. All diff hunks pass safety standards.`
 
 ---
 
-## 🚨 Critical Issues (Must Fix before Merge/Release)
-(If none detected: "None detected. No crash or leak risks found.")
+## 🚨 Critical Issues
+
+(Only HIGH-confidence production-significant blockers belong here.)
 
 ### 1. [filepath:line] Concise Issue Title
-- **Cause & Blast Radius**: Detailed scenario explaining why this causes crashes, leaks, or exploits in production.
+- **Confidence**: HIGH
+- **Cause & Blast Radius**: Concrete execution path and affected callers/users/resources.
+- **Evidence**: Why the diff/context establishes the defect.
 - **Vulnerable Code**:
 ```[language]
-// Problematic original code snippet
+// Problematic code
 ```
 - **Conservative Fix**:
 ```[language]
-// Rock-solid, minimal, conservative fix
+// Minimal safe fix
 ```
+
+If none: `None detected.`
 
 ---
 
-## ⚠️ Warning Issues (High Risk / Edge Cases)
-(Edge conditions, potential NPE/nil dereferences, incomplete error handling, subtle concurrency risks)
+## ⚠️ Warning Issues
+
+Include MEDIUM-confidence credible risks and HIGH-confidence issues that do not meet the blocking threshold. LOW-confidence concerns should be clearly labeled and should not block the verdict.
+
+### 1. [filepath:line] Concise Issue Title
+- **Confidence**: MEDIUM
+- **Risk**: Concrete edge case or operational consequence.
+- **Why not proven**: Missing runtime/framework/semantic evidence.
+- **Recommendation**: Minimal validation or conservative fix.
 
 ---
 
 ## 🧹 Over-Engineering & YAGNI Findings
-(Unnecessary wrappers, single-impl interfaces, redundant abstractions, code to be deleted or simplified)
+
+YAGNI is advisory unless it creates a concrete correctness/security/operational risk.
+
+- `[filepath:line] yagni: [LOW] ...`
+- `[filepath:line] stdlib: [MEDIUM] ...`
+
+Do not recommend deleting abstractions solely because they currently have one implementation. Check DI, testing seams, framework contracts, plugin boundaries, and domain ownership.
+
+---
+
+## 🎯 Caller & Blast-Radius Notes
+
+- **Changed contracts**: [None | concise list]
+- **Caller evidence**: [direct callers inspected / textual candidates only / semantic tooling unavailable]
+- **Sibling paths checked**: [Yes/No + reason]
 
 ---
 
 ## 💡 Net Impact & Verdict Summary
-- **Net code change**: `-<N> lines` (if simplifications are applied)
-- **Bottom line**: [Final verdict in 1 clear sentence]
+
+- **Net code change**: `-<N> lines` (only if a concrete simplification is recommended)
+- **Bottom line**: [One clear sentence explaining why the verdict is PASS, CONDITIONAL PASS, or BLOCKED.]
+
+### Verdict Rules
+- 🔴 BLOCKED = HIGH-confidence production-significant security, crash, leak, race/deadlock, data-corruption, or caller-contract defect.
+- 🟡 CONDITIONAL PASS = no HIGH blocker, but a credible MEDIUM-confidence safety/security/stability/contract risk remains.
+- 🟢 PASS = no HIGH/MEDIUM safety or security findings; LOW and subjective style findings do not block.
+
+If there are no issues: **Solid & Lean. Clean to ship.**
 ```

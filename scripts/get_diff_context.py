@@ -401,7 +401,9 @@ def get_untracked_files_diff(git_root):
         ]
         for l in lines:
             # strip newline from right for clean output
-            diff_lines.append(f"+{l.rstrip('\r\n')}")
+            # NOTE: avoid backslash inside f-string expression for Python < 3.12
+            stripped = l.rstrip("\r\n")
+            diff_lines.append(f"+{stripped}")
 
         untracked_diffs[rel_path] = "\n".join(diff_lines)
 

@@ -179,6 +179,65 @@ def parse_diff(raw_diff):
 
     return filtered_files, skipped_files
 
+def is_binary_file(filepath):
+    """Check if file appears to be binary by checking for null bytes in initial chunk."""
+    try:
+        with open(filepath, "rb") as f:
+            chunk = f.read(1024)
+            return b"\x00" in chunk
+    except Exception:
+        return True
+
+def get_untracked_files_diff(git_root):
+    """Detect untracked files and synthesize unified diffs for new text files."""
+    try:
+        status_output = run_command(["git", "status", "--porcelain", "-uall"], cwd=git_root)
+    except Exception:
+        return {}, []
+
+    untracked_diffs = {}
+    skipped_untracked = []
+
+    for line in status_output.splitlines():
+        if not line.startswith("?? "):
+            continue
+        rel_path = line[3:].strip()
+        # Handle quotes if filename has spaces
+        if rel_path.startswith('"') and rel_path.endswith('"'):
+            rel_path = rel_path[1:-1]
+
+        if is_ignored(rel_path):
+            skipped_untracked.append(rel_path)
+            continue
+
+        full_path = os.path.join(git_root, rel_path)
+        if not os.path.isfile(full_path) or is_binary_file(full_path):
+            skipped_untracked.append(rel_path)
+            continue
+
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except Exception:
+            skipped_untracked.append(rel_path)
+            continue
+
+        num_lines = len(lines)
+        diff_lines = [
+            f"diff --git a/{rel_path} b/{rel_path}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{rel_path}",
+            f"@@ -0,0 +1,{num_lines} @@"
+        ]
+        for l in lines:
+            # strip newline from right for clean output
+            diff_lines.append(f"+{l.rstrip('\r\n')}")
+
+        untracked_diffs[rel_path] = "\n".join(diff_lines)
+
+    return untracked_diffs, skipped_untracked
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract token-efficient git diff context for conservative enterprise code verification."
@@ -199,6 +258,18 @@ def main():
         "--file", "-f", type=str,
         help="Limit diff inspection to a specific file or path"
     )
+    parser.add_argument(
+        "--max-file-lines", type=int, default=400,
+        help="Maximum diff lines per file before truncation (default: 400)"
+    )
+    parser.add_argument(
+        "--max-total-lines", type=int, default=1200,
+        help="Maximum total diff lines across all files (default: 1200)"
+    )
+    parser.add_argument(
+        "--no-truncate", "--all", action="store_true",
+        help="Disable diff truncation limits"
+    )
 
     args = parser.parse_args()
 
@@ -208,7 +279,6 @@ def main():
     raw_diff = run_command(diff_cmd, cwd=git_root)
 
     if not raw_diff.strip():
-        # If HEAD diff was empty, check unstaged-only (in case initial commit or no HEAD)
         if not (args.commit or args.range or args.staged):
             fallback_cmd = ["git", "diff", "--no-color", "--unified=3"]
             if args.file:
@@ -217,6 +287,14 @@ def main():
             target_desc = "Working tree (unstaged)"
 
     filtered_files, skipped_files = parse_diff(raw_diff)
+
+    # When inspecting working tree (uncommitted), include untracked code files
+    if not (args.commit or args.range or args.staged):
+        untracked_files, skipped_untracked = get_untracked_files_diff(git_root)
+        if args.file:
+            untracked_files = {p: c for p, c in untracked_files.items() if p == args.file or p.startswith(args.file)}
+        filtered_files.update(untracked_files)
+        skipped_files.extend(skipped_untracked)
 
     if not filtered_files and not skipped_files:
         print(f"## [cross-check] No changes found for: {target_desc}")
@@ -239,11 +317,35 @@ def main():
     print()
 
     print("## Diff Details")
-    for file_path, content in filtered_files.items():
+    total_emitted_lines = 0
+    budget_exhausted = False
+
+    for file_path in sorted(filtered_files.keys()):
+        content = filtered_files[file_path]
+        lines = content.splitlines()
+        total_lines = len(lines)
+
         print(f"### File: `{file_path}`")
-        print("```diff")
-        print(content)
-        print("```\n")
+
+        if not args.no_truncate and budget_exhausted:
+            print(f"> *[Diff truncated: Total token budget ({args.max_total_lines} lines) reached. Use `--file {file_path}` to inspect this file directly.]*\n")
+            continue
+
+        if not args.no_truncate and total_lines > args.max_file_lines:
+            truncated_lines = lines[:args.max_file_lines]
+            print("```diff")
+            print("\n".join(truncated_lines))
+            print(f"\n# ... [Diff truncated: showing first {args.max_file_lines} of {total_lines} lines. Run with --no-truncate for full diff.] ...")
+            print("```\n")
+            total_emitted_lines += args.max_file_lines
+        else:
+            print("```diff")
+            print(content)
+            print("```\n")
+            total_emitted_lines += total_lines
+
+        if not args.no_truncate and total_emitted_lines >= args.max_total_lines:
+            budget_exhausted = True
 
 if __name__ == "__main__":
     main()

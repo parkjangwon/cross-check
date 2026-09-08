@@ -1,6 +1,7 @@
 ---
 name: cross-check
 description: Conservative enterprise-grade code auditor for git diffs across any programming language. Audits code modifications (uncommitted changes, staged diffs, specific commits, branch ranges) for security vulnerabilities, crash/leak hazards, concurrency race conditions, edge-case bugs, and over-engineering (YAGNI). Triggers on: 'cross-check', 'verify diff', 'audit changes', 'security review', 'check commit', 'crash risk', 'memory leak check', 'over-engineering check', '크로스체크', '코드 검증', 'diff 점검', '버그 검사', '보안 취약점', '장애 유발 코드', '오버엔지니어링 검사'.
+argument-hint: "[--staged|--commit <hash>|--range <base>..<head>|--file <path>]"
 ---
 
 # Cross-Check: Enterprise Security & Stability Gatekeeper

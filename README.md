@@ -11,15 +11,52 @@
 
 ## ⚡ Why Cross-Check?
 
-In enterprise software deployed on-premise, defects cannot be silently hot-reloaded. A single memory leak, unhandled panic, or authorization bypass triggers emergency on-site engineering missions and compliance audit escalations.
+In enterprise software deployed on-premise, defects cannot be silently hot-reloaded. A single memory leak, unhandled panic, or authorization bypass can trigger emergency engineering and compliance escalation.
 
-AI vibe-coding produces plausible code, but routinely introduces:
-- **Silent Resource Leaks**: Unclosed file descriptors, sockets, database connections, and background coroutines/listeners.
-- **Concurrency Hazards**: Data races on shared mutable state and lock-order deadlocks.
-- **Swallowed Errors**: Empty catch/error blocks and lost transaction rollbacks.
-- **Over-Engineering Bloat**: AI-generated design patterns, single-implementation interfaces, and unneeded dependencies for trivial tasks.
+AI coding agents produce plausible code, but can also introduce:
+- **Resource Leaks**: Unclosed files, sockets, database connections, workers, and listeners.
+- **Concurrency Hazards**: Races, check-then-act bugs, and lock-order deadlocks.
+- **Swallowed Errors**: Lost causes, ignored failures, and broken transaction rollback paths.
+- **Contract Drift**: A changed return/error/precondition contract that breaks existing callers.
+- **Over-Engineering**: AI-generated abstractions, unnecessary dependencies, and speculative flexibility.
 
-**`cross-check` is not a full-scan SAST.** It performs a fast, conservative audit strictly on your **`git diff`** and its external caller sites against **7 Universal Enterprise Invariants**.
+**`cross-check` is not a full-scan SAST.** It is a fast, conservative **post-change safety gate** over your `git diff`, expanding into caller context only when needed to establish blast radius.
+
+---
+
+## 🧭 7 Universal Enterprise Invariants
+
+| Tag | Category | What We Catch |
+| :--- | :--- | :--- |
+| `leak:` | **Resource Lifecycle** | FD, socket, DB connection, worker/task, listener, and context leaks. |
+| `race:` | **Concurrency** | Shared mutable state, non-atomic updates, TOCTOU, lock/deadlock hazards. |
+| `npe:` / `crash:` | **Boundary Safety** | Null/nil dereferences, bounds errors, unsafe casts, panic paths. |
+| `caller:` | **Blast Radius** | Return/error/precondition/side-effect drift at existing call sites. |
+| `swallow:` | **Error Integrity** | Ignored errors, lost causes, uncaught async failures, rollback gaps. |
+| `sec:` | **Trust Boundary** | Injection, path traversal, secret/PII exposure, auth/authz bypass. |
+| `yagni:` | **Minimalism** | Speculative abstractions, dependency bloat, redundant layers. |
+
+### Evidence-based confidence
+
+Every finding is labeled:
+
+- **HIGH** — directly demonstrated by the diff/context.
+- **MEDIUM** — credible, but runtime/framework or unseen-path behavior could change the outcome.
+- **LOW** — plausible but not established from available evidence.
+
+LOW-confidence observations never block a review. Language/framework-specific guidance is used to reduce false positives rather than invent defects.
+
+---
+
+## 🚦 Verdicts
+
+| Verdict | Meaning |
+| :--- | :--- |
+| 🔴 **BLOCKED** | HIGH-confidence production-significant security, crash, leak, race/deadlock, data-corruption, or caller-contract defect. |
+| 🟡 **CONDITIONAL PASS** | No HIGH blocker, but a credible MEDIUM-confidence safety/security/stability/contract risk remains. |
+| 🟢 **PASS** | No HIGH/MEDIUM safety or security findings. LOW and subjective style findings do not block. |
+
+**YAGNI and style findings cannot block by themselves.**
 
 ---
 
@@ -43,23 +80,7 @@ ln -s /path/to/cross-check ~/.gemini/antigravity/skills/cross-check
 
 ---
 
-## 🧭 The 7 Universal Invariants
-
-| Tag | Category | What We Catch |
-| :--- | :--- | :--- |
-| `leak:` | **Resource Lifecycle** | FD, socket, DB connection, thread/goroutine, or listener leaks on any exit path. |
-| `race:` | **Concurrency** | Unprotected shared state, non-atomic updates, lock contention during I/O. |
-| `npe:` / `crash:` | **Memory & Pointer** | Null/nil dereferences, array out-of-bounds, unsafe unboxing, raw casts. |
-| `caller:` | **Blast Radius** | Caller contract drift, unhandled null returns or uncaught errors at call sites. |
-| `swallow:` | **Error Integrity** | Silently ignored exceptions, lost root-cause traces, missing transaction rollbacks. |
-| `sec:` | **Trust Boundary** | SQL/command injection, path traversal, hardcoded secrets, plain PII in logs. |
-| `yagni:` | **Over-Engineering** | Single-impl interfaces, premature design patterns, unnecessary dependencies. |
-
----
-
 ## 📊 Sample Output
-
-Review reports are dense, tagged, and actionable:
 
 ```markdown
 # 🛡️ Cross-Check Security & Stability Review
@@ -67,20 +88,18 @@ Review reports are dense, tagged, and actionable:
 - **Target Scope**: Working Tree (staged + unstaged)
 - **Audited Files**: 2 files
 - **Scoreboard**: 🚨 1 Critical | ⚠️ 1 Warning | 🧹 1 YAGNI | net: -45 lines possible
+- **Confidence**: HIGH 1 | MEDIUM 2 | LOW 1
 - **Verdict**: 🔴 BLOCKED
 
----
-
-## ⚡ Quick Scan (One-Line Tagged Findings)
-- `session_manager.go:L42: race: concurrent write to activeSessions map. Protect with sync.RWMutex.`
-- `SecurityService.java:L80: swallow: catch(Exception e) ignores error. Re-throw or ensure rollback.`
-- `AuthRuleEngine.ts:L12-70: yagni: AbstractRuleEngine with 1 impl. Inline directly, delete 40 lines.`
-
----
+## ⚡ Quick Scan
+- `session_manager.go:L42: race: [HIGH] concurrent write to activeSessions map. Protect with sync.RWMutex.`
+- `AuthService.java:L89: caller: [MEDIUM] timeout now returns null; caller L91 dereferences it. Guard or preserve the contract.`
+- `RuleEngine.ts:L12-70: yagni: [LOW] abstraction appears to have one consumer. Verify DI/test/plugin boundary before removing.`
 
 ## 🚨 Critical Issues
 ### 1. [session_manager.go:L42] Concurrent Map Write Panic
-- **Blast Radius**: High concurrent traffic triggers Go runtime panic (`fatal error: concurrent map writes`), crashing the on-premise daemon.
+- **Confidence**: HIGH
+- **Blast Radius**: High concurrent traffic can trigger a Go runtime panic and terminate the daemon.
 - **Conservative Fix**:
 ```go
 m.mu.Lock()
@@ -107,16 +126,21 @@ Ask your agent naturally in English or Korean:
 Extract token-efficient, noise-free diffs directly in your terminal:
 
 ```bash
-# Working tree changes (auto-detects untracked files, excludes lockfiles & binaries)
 python3 scripts/get_diff_context.py
-
-# Staged only
 python3 scripts/get_diff_context.py --staged
-
-# Specific commit or range
 python3 scripts/get_diff_context.py --commit <HASH>
 python3 scripts/get_diff_context.py --range main..HEAD
 ```
+
+The extractor automatically includes untracked files, filters common generated/binary noise, and can discover candidate caller sites. Caller discovery is intentionally treated as a candidate list; reflection, generated code, dynamic dispatch, and framework wiring may require semantic review.
+
+---
+
+## 📚 Reference Guides
+
+- `references/enterprise_checklist.md` — universal invariants, confidence policy, and verdict mapping.
+- `references/language_guidance.md` — Java/JVM, Go, Rust, C/C++, Python, TypeScript/JavaScript, and framework-aware review guidance.
+- `references/report_template.md` — standardized high-density review output.
 
 ---
 

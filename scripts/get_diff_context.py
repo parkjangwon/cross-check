@@ -216,7 +216,7 @@ def is_binary_file(filepath):
 COMMON_EXCLUDED_METHOD_NAMES = {
     # Control flow & keywords
     "if", "for", "while", "switch", "catch", "init", "main", "toString", "equals",
-    "hashCode", "constructor", "run", "test", "get", "set", "true", "false", "null",
+    "hashCode", "constructor", "true", "false", "null",
     "return", "this", "super", "export", "default", "class", "interface", "struct",
     "enum", "type", "void", "string", "int", "boolean", "new", "lambda", "render",
     "not", "and", "or", "is", "in", "raise", "try", "except", "finally", "assert",
@@ -224,13 +224,29 @@ COMMON_EXCLUDED_METHOD_NAMES = {
     # Framework lifecycle
     "created", "mounted", "updated", "destroyed", "beforeCreate", "beforeMount",
     "onMounted", "onUnmounted", "computed", "watch", "setup", "data", "props",
-    # Language builtins & universal utilities
+    # Language builtins & universal utilities (common verbs like get/set/run/test
+    # are deliberately NOT excluded: they are frequent real method names)
     "range", "len", "open", "print", "close", "read", "write", "send", "recv",
-    "map", "filter", "reduce", "list", "dict", "str", "float", "tuple", "any", "all",
+    "list", "dict", "str", "float", "tuple", "any", "all",
     "log", "info", "warn", "error", "debug", "trace", "parse", "format", "build",
-    "push", "pop", "shift", "unshift", "slice", "splice", "join", "split", "find",
+    "push", "pop", "shift", "unshift", "slice", "splice", "join", "split",
     "includes", "indexOf", "lastIndexOf", "forEach", "some", "every", "sort"
 }
+
+# File extensions that are not source code: keep them visible in the diff,
+# but never extract "modified methods" from them for blast-radius analysis.
+NON_CODE_EXTENSIONS = {
+    ".md", ".markdown", ".rst", ".txt", ".adoc",
+    ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".csv", ".tsv", ".html", ".htm", ".xml", ".svg",
+    ".lock", ".log", ".env", ".editorconfig", ".gitignore", ".gitattributes",
+    ".sql", ".graphql", ".prisma", ".dockerfile", ".http", ".rest",
+}
+
+def is_code_file(file_path):
+    """True only for files whose extension suggests runnable source code."""
+    ext = os.path.splitext(file_path)[1].lower()
+    return ext not in NON_CODE_EXTENSIONS
 
 def extract_enclosing_function_from_file(file_path, line_number, func_patterns):
     """Scan upward from line_number in source file to find enclosing function definition."""
@@ -303,6 +319,8 @@ def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_s
     """Find external caller sites in the repository for modified methods."""
     symbol_to_source = {}
     for file_path, diff_content in filtered_files.items():
+        if not is_code_file(file_path):
+            continue  # docs/config/data files never define methods to trace
         symbols = extract_modified_symbols(git_root, file_path, diff_content)
         for sym in symbols:
             if sym not in symbol_to_source:

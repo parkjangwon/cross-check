@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.jpg" alt="cross-check banner" width="100%">
+</p>
+
 # 🛡️ cross-check
 
 > **Laser-focused, diff-scoped gatekeeper for enterprise stability, security, and YAGNI.**  

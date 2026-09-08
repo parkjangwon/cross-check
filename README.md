@@ -1,97 +1,119 @@
-# 🛡️ cross-check: Enterprise Security & Stability Gatekeeper
+# 🛡️ cross-check
 
-> **Language-Agnostic, Diff-Scoped Enterprise Code Verification Skill**  
-> Complies with the universal Agent Skills standard (`SKILL.md`) for Claude Code, Codex, Antigravity, and other leading AI coding agents.
-
----
-
-## 🎯 Why Cross-Check?
-
-- **Guard against Vibe-Coding Hazards**: AI coding tools generate plausible code that frequently conceals **resource leaks (FD, socket, DB connections), concurrency race conditions, null/nil panics, swallowed errors, and authorization bypasses**.
-- **Zero On-Premise Regressions**: In enterprise software deployed on-premise, defects cannot be silently hot-reloaded. Crashes and security flaws result in emergency customer on-site engineering and compliance audit escalations.
-- **Diff-Scoped (Not Full-Scan SAST)**: Targets strictly `git diff` modifications and direct callers/callees. Saves 80-90% of LLM tokens while delivering rapid, high-signal reviews.
-- **Ruthless YAGNI / Anti-Over-Engineering**: Flags unnecessary abstractions, single-implementation interfaces, premature design patterns, and unneeded dependencies.
-- **Language-Agnostic**: Operates across any language ecosystem (Java, Go, C/C++, Rust, Python, TypeScript, etc.) based on Universal Enterprise Invariants.
+> **Laser-focused, diff-scoped gatekeeper for enterprise stability, security, and YAGNI.**  
+> Built for Claude Code, Codex, Antigravity, and any Agent Skills-compatible AI assistant.
 
 ---
 
-## 📂 Project Structure
+## ⚡ Why Cross-Check?
 
-```
-cross-check/
-├── SKILL.md                 # Universal Agent Skill specification and gatekeeper persona
-├── scripts/
-│   └── get_diff_context.py  # Python 3 stdlib git diff extractor (auto-filters lockfiles & binaries)
-├── references/
-│   ├── enterprise_checklist.md  # 6 Universal Enterprise Invariants & checklist
-│   └── report_template.md       # High-density reporting format with tagged findings & scoreboard
-└── README.md                # Installation and usage instructions
-```
+In enterprise software deployed on-premise, defects cannot be silently hot-reloaded. A single memory leak, unhandled panic, or authorization bypass triggers emergency on-site engineering missions and compliance audit escalations.
+
+AI vibe-coding produces plausible code, but routinely introduces:
+- **Silent Resource Leaks**: Unclosed file descriptors, sockets, database connections, and background coroutines/listeners.
+- **Concurrency Hazards**: Data races on shared mutable state and lock-order deadlocks.
+- **Swallowed Errors**: Empty catch/error blocks and lost transaction rollbacks.
+- **Over-Engineering Bloat**: AI-generated design patterns, single-implementation interfaces, and unneeded dependencies for trivial tasks.
+
+**`cross-check` is not a full-scan SAST.** It performs a fast, conservative audit strictly on your **`git diff`** and its direct callers/callees against **6 Universal Enterprise Invariants**.
 
 ---
 
-## 🚀 Installation
+## 📦 Quick Install
 
-### 1. Claude Code
-Install as a global skill or local project skill:
-
+### Via `npx skill.sh` (Recommended)
 ```bash
-# Global installation (available across all repositories)
+npx skill.sh add parkjangwon/cross-check
+```
+
+### Manual Symlink
+```bash
+# Claude Code (Global)
 mkdir -p ~/.claude/skills
-ln -s /Users/pjw/dev/project/cross-check ~/.claude/skills/cross-check
+ln -s /path/to/cross-check ~/.claude/skills/cross-check
 
-# Or project-local installation
-mkdir -p .claude/skills
-ln -s /Users/pjw/dev/project/cross-check .claude/skills/cross-check
-```
-
-### 2. Antigravity (AGY)
-Link to your Antigravity skills directory:
-
-```bash
+# Antigravity (AGY)
 mkdir -p ~/.gemini/antigravity/skills
-ln -s /Users/pjw/dev/project/cross-check ~/.gemini/antigravity/skills/cross-check
+ln -s /path/to/cross-check ~/.gemini/antigravity/skills/cross-check
 ```
 
-### 3. Codex / Cursor / Other Agents
-Place inside `.skills/cross-check` in your project root or symlink to your agent's configured skills path.
+---
+
+## 🧭 The 6 Universal Invariants
+
+| Tag | Category | What We Catch |
+| :--- | :--- | :--- |
+| `leak:` | **Resource Lifecycle** | FD, socket, DB connection, thread/goroutine, or listener leaks on any exit path. |
+| `race:` | **Concurrency** | Unprotected shared state, non-atomic updates, lock contention during I/O. |
+| `npe:` / `crash:` | **Memory & Pointer** | Null/nil dereferences, array out-of-bounds, unsafe unboxing, raw casts. |
+| `swallow:` | **Error Integrity** | Silently ignored exceptions, lost root-cause traces, missing transaction rollbacks. |
+| `sec:` | **Trust Boundary** | SQL/command injection, path traversal, hardcoded secrets, plain PII in logs. |
+| `yagni:` | **Over-Engineering** | Single-impl interfaces, premature design patterns, unnecessary dependencies. |
 
 ---
 
-## 💬 Usage Examples (Prompts)
+## 📊 Sample Output
 
-The skill automatically triggers on natural language prompts in both English and Korean:
+Review reports are dense, tagged, and actionable:
 
-1. **Audit uncommitted working tree changes**:
-   > *"Run a cross-check on my uncommitted code for crash risks, leaks, and over-engineering."*  
-   > *(또는 "방금 수정한 코드 버그나 리소스 누수 없는지 크로스체크해줘.")*
-2. **Audit staged changes before commit**:
-   > *"Cross-check staged changes against enterprise safety invariants."*
-3. **Audit a specific commit**:
-   > *"Cross-check commit `a1b2c3d` for regressions, security flaws, and YAGNI violations."*
-4. **Audit PR diff against main branch**:
-   > *"Run cross-check on `main..HEAD` and generate the review scoreboard."*
+```markdown
+# 🛡️ Cross-Check Security & Stability Review
+
+- **Target Scope**: Working Tree (staged + unstaged)
+- **Audited Files**: 2 files
+- **Scoreboard**: 🚨 1 Critical | ⚠️ 1 Warning | 🧹 1 YAGNI | net: -45 lines possible
+- **Verdict**: 🔴 BLOCKED
 
 ---
 
-## 🛠️ Standalone CLI Usage (`get_diff_context.py`)
+## ⚡ Quick Scan (One-Line Tagged Findings)
+- `session_manager.go:L42: race: concurrent write to activeSessions map. Protect with sync.RWMutex.`
+- `SecurityService.java:L80: swallow: catch(Exception e) ignores error. Re-throw or ensure rollback.`
+- `AuthRuleEngine.ts:L12-70: yagni: AbstractRuleEngine with 1 impl. Inline directly, delete 40 lines.`
 
-Extract clean, token-efficient diff context directly in your terminal:
+---
+
+## 🚨 Critical Issues
+### 1. [session_manager.go:L42] Concurrent Map Write Panic
+- **Blast Radius**: High concurrent traffic triggers Go runtime panic (`fatal error: concurrent map writes`), crashing the on-premise daemon.
+- **Conservative Fix**:
+```go
+m.mu.Lock()
+m.activeSessions[id] = session
+m.mu.Unlock()
+```
+```
+
+---
+
+## 💬 Usage
+
+Ask your agent naturally in English or Korean:
+
+- *"Cross-check my uncommitted code for crash risks, leaks, and over-engineering."*
+- *"Audit staged changes against enterprise invariants."*
+- *"Cross-check commit `a1b2c3d` before merging."*
+- *(한국어: "방금 수정한 코드 장애 유발 요인이랑 오버엔지니어링 크로스체크해줘.")*
+
+---
+
+## 🛠️ Standalone CLI (`get_diff_context.py`)
+
+Extract token-efficient, noise-free diffs directly in your terminal:
 
 ```bash
-# Working tree changes (staged + unstaged)
+# Working tree changes (auto-detects untracked files, excludes lockfiles & binaries)
 python3 scripts/get_diff_context.py
 
-# Staged changes only
+# Staged only
 python3 scripts/get_diff_context.py --staged
 
-# Specific commit
-python3 scripts/get_diff_context.py --commit <COMMIT_HASH>
-
-# Commit or branch range
+# Specific commit or range
+python3 scripts/get_diff_context.py --commit <HASH>
 python3 scripts/get_diff_context.py --range main..HEAD
-
-# Single file inspection
-python3 scripts/get_diff_context.py --file path/to/file.go
 ```
-*Note: Lockfiles (`package-lock.json`, `Cargo.lock`), bundles, and binaries are automatically excluded.*
+
+---
+
+## 📜 License
+MIT

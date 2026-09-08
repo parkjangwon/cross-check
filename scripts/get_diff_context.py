@@ -176,6 +176,147 @@ def is_broadly_referenced(sym, caller_files, total_code_files):
         return distinct >= max(BROAD_SYMBOL_MIN_FILES, round(total_code_files * BROAD_SYMBOL_FILE_RATIO))
     return distinct >= BROAD_SYMBOL_MIN_FILES
 
+# --- Gitlink / Submodule Helpers ---------------------------------------------
+
+def is_gitlink(content):
+    """Check if diff content represents a submodule gitlink (mode 160000 / Subproject commit)."""
+    if not content:
+        return False
+    has_mode = bool(re.search(r"^(?:index [0-9a-fA-F]+\.\.[0-9a-fA-F]+ 160000|(?:new|deleted) file mode 160000)", content, re.MULTILINE))
+    has_subproject = bool(re.search(r"^[-+]Subproject commit [0-9a-fA-F]{7,40}$", content, re.MULTILINE))
+    return has_mode or has_subproject
+
+def extract_subproject_commits(content):
+    """
+    Extract (old_sha, new_sha) from a gitlink diff.
+    Returns (old_sha, new_sha), either of which may be None.
+    """
+    old_m = re.search(r"^-Subproject commit ([0-9a-fA-F]{7,40})$", content, re.MULTILINE)
+    new_m = re.search(r"^\+Subproject commit ([0-9a-fA-F]{7,40})$", content, re.MULTILINE)
+    old_sha = old_m.group(1) if old_m else None
+    new_sha = new_m.group(1) if new_m else None
+    return old_sha, new_sha
+
+def get_submodule_paths(git_root):
+    """Return set of relative submodule paths declared in .gitmodules."""
+    paths = set()
+    gitmodules = os.path.join(git_root, ".gitmodules")
+    if os.path.isfile(gitmodules):
+        try:
+            with open(gitmodules, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("path =") or line.startswith("path="):
+                        p = line.split("=", 1)[1].strip()
+                        paths.add(p.replace("\\", "/"))
+        except Exception:
+            pass
+    return paths
+
+def find_submodule_prefix(git_root, rel_path, declared_paths=None):
+    """
+    If rel_path is inside a git submodule, return the submodule's relative path from git_root.
+    Otherwise return None.
+    """
+    if not rel_path:
+        return None
+    normalized = rel_path.replace("\\", "/")
+    if declared_paths is None:
+        declared_paths = get_submodule_paths(git_root)
+
+    parts = normalized.split("/")
+    for i in range(1, len(parts)):
+        prefix = "/".join(parts[:i])
+        if prefix in declared_paths:
+            return prefix
+        sub_dir = os.path.join(git_root, prefix)
+        if os.path.exists(os.path.join(sub_dir, ".git")):
+            return prefix
+    return None
+
+def expand_submodule_diff(git_root, sub_path, old_sha, new_sha):
+    """
+    Expand a submodule gitlink into inner file diffs if the submodule
+    repository is cloned and initialized locally.
+    Returns: (expanded_files_dict, skipped_list, error_or_notice_string)
+    """
+    full_sub_path = os.path.join(git_root, sub_path)
+    if not os.path.isdir(full_sub_path):
+        return None, [], f"Submodule directory '{sub_path}' not found or not initialized locally"
+
+    # Verify it is a valid git repository
+    try:
+        chk = subprocess.run(
+            ["git", "-C", full_sub_path, "rev-parse", "--git-dir"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if chk.returncode != 0:
+            return None, [], f"Submodule '{sub_path}' is not an initialized git repo"
+    except Exception as e:
+        return None, [], f"Cannot inspect submodule '{sub_path}': {e}"
+
+    # Build diff command for submodule
+    if old_sha and new_sha:
+        cmd = ["git", "-C", full_sub_path, "diff", "--no-color", "--unified=3", f"{old_sha}..{new_sha}"]
+    elif new_sha:
+        # Added submodule: diff against empty tree SHA
+        cmd = ["git", "-C", full_sub_path, "diff", "--no-color", "--unified=3", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", new_sha]
+    elif old_sha:
+        # Removed submodule: diff against empty tree SHA
+        cmd = ["git", "-C", full_sub_path, "diff", "--no-color", "--unified=3", old_sha, "4b825dc642cb6eb9a060e54bf8d69288fbee4904"]
+    else:
+        return None, [], f"No commit hashes found in gitlink for '{sub_path}'"
+
+    try:
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace"
+        )
+        if res.returncode != 0:
+            err = res.stderr.strip().splitlines()
+            first_err = err[0] if err else "git diff failed in submodule"
+            return None, [], f"Submodule '{sub_path}' diff error: {first_err}"
+
+        inner_diff = res.stdout
+        if not inner_diff.strip():
+            return {}, [], None
+
+        raw_inner_files, raw_skipped = parse_diff(inner_diff)
+        expanded_files = {}
+        skipped = []
+
+        for inner_file, inner_content in raw_inner_files.items():
+            prefixed = f"{sub_path}/{inner_file}"
+            if is_ignored(prefixed):
+                skipped.append(prefixed)
+                continue
+
+            lines = inner_content.splitlines()
+            adjusted = []
+            for line in lines:
+                if line.startswith("diff --git "):
+                    adjusted.append(f"diff --git a/{prefixed} b/{prefixed}")
+                elif line.startswith("--- a/"):
+                    adjusted.append(f"--- a/{prefixed}")
+                elif line.startswith("+++ b/"):
+                    adjusted.append(f"+++ b/{prefixed}")
+                else:
+                    adjusted.append(line)
+            expanded_files[prefixed] = "\n".join(adjusted)
+
+        for sk in raw_skipped:
+            skipped.append(f"{sub_path}/{sk}")
+
+        return expanded_files, skipped, None
+    except Exception as e:
+        return None, [], f"Error executing git in submodule '{sub_path}': {e}"
+
 def build_diff_command(args, git_root):
     """Build git diff command based on user options."""
     cmd = ["git", "diff", "--no-color", "--unified=3"]
@@ -210,7 +351,9 @@ def build_diff_command(args, git_root):
             rel_to_root = os.path.relpath(abs_target, git_root).replace("\\", "/")
         else:
             rel_to_root = raw_file.replace("\\", "/")
-        cmd.extend(["--", rel_to_root])
+        sub_prefix = find_submodule_prefix(git_root, rel_to_root)
+        target_path_for_diff = sub_prefix if sub_prefix else rel_to_root
+        cmd.extend(["--", target_path_for_diff])
         target_desc += f" (filter: {rel_to_root})"
 
     return cmd, target_desc
@@ -323,8 +466,8 @@ def extract_enclosing_function_from_file(file_path, line_number, func_patterns):
 
 def extract_modified_symbols(git_root, file_path, diff_content):
     """Extract candidate function/method names modified in diff."""
-    if not is_code_file(file_path):
-        return []  # docs/config/data files never define methods to trace
+    if is_gitlink(diff_content) or not is_code_file(file_path):
+        return []  # docs/config/data/gitlinks never define methods to trace
     candidates = set()
 
     hunk_header_re = re.compile(r"^@@\s+-([0-9]+)(?:,[0-9]+)?\s+\+([0-9]+)(?:,[0-9]+)?\s+@@\s*(.*)$")
@@ -393,8 +536,9 @@ def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_s
 
         # Run git grep to find usages across repo
         try:
+            grep_cmd = ["git", "grep", "--recurse-submodules", "--no-color", "-n", "-w", sym]
             grep_res = subprocess.run(
-                ["git", "grep", "--no-color", "-n", "-w", sym],
+                grep_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -402,6 +546,17 @@ def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_s
                 errors="replace",
                 cwd=git_root
             )
+            if grep_res.returncode != 0 and grep_res.stderr:
+                # Fallback to standard git grep without --recurse-submodules if not supported
+                grep_res = subprocess.run(
+                    ["git", "grep", "--no-color", "-n", "-w", sym],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=git_root
+                )
             if grep_res.returncode != 0 or not grep_res.stdout.strip():
                 continue
 
@@ -511,12 +666,14 @@ def _ext_of(path):
     _, ext = os.path.splitext(path)
     return ext.lower()
 
-def summarize_change_kind(file_path, n_add, n_del):
+def summarize_change_kind(file_path, n_add, n_del, is_submodule=False):
     """
     Coarse, extension-based classification of what a changed file *mostly is*,
     for the review profile. Not a substitute for reading it — only a signal the
     reviewing agent can use to triage breadth (e.g. "mostly lockfiles/tests").
     """
+    if is_submodule:
+        return "submodule"
     ext = _ext_of(file_path)
     base = os.path.basename(file_path).lower()
 
@@ -562,7 +719,8 @@ def build_commit_profile(filtered_files, stats, total_add, total_del, total_line
     n_files = len(filtered_files)
     kinds = {}
     for path, (adds, dels, _tl) in stats.items():
-        k = summarize_change_kind(path, adds, dels)
+        is_sub = is_gitlink(filtered_files.get(path, ""))
+        k = summarize_change_kind(path, adds, dels, is_submodule=is_sub)
         kinds[k] = kinds.get(k, 0) + 1
     kind_summary = ", ".join(f"{v} {k.replace('config/docs/data', 'config')}"
                              for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]))
@@ -665,6 +823,27 @@ def main():
 
     filtered_files, skipped_files = parse_diff(raw_diff)
 
+    # Expand submodule gitlinks (mode 160000 / Subproject commit)
+    expanded_files = {}
+    for path, content in filtered_files.items():
+        if is_gitlink(content):
+            old_sha, new_sha = extract_subproject_commits(content)
+            inner_files, inner_skipped, err_msg = expand_submodule_diff(git_root, path, old_sha, new_sha)
+            if inner_files is not None:
+                if inner_files:
+                    expanded_files.update(inner_files)
+                else:
+                    sha_info = f"{old_sha[:8]}..{new_sha[:8]}" if old_sha and new_sha else (new_sha[:8] if new_sha else (old_sha[:8] if old_sha else ""))
+                    notice = f"# [cross-check: Submodule '{path}' ({sha_info}) contains no internal file changes]"
+                    expanded_files[path] = content + "\n" + notice
+                skipped_files.extend(inner_skipped)
+            else:
+                notice = f"# [cross-check note: {err_msg}]"
+                expanded_files[path] = content + "\n" + notice
+        else:
+            expanded_files[path] = content
+    filtered_files = expanded_files
+
     # When inspecting working tree (uncommitted), include untracked code files
     if not (args.commit or args.range or args.staged):
         untracked_files, skipped_untracked = get_untracked_files_diff(git_root)
@@ -672,6 +851,11 @@ def main():
             untracked_files = {p: c for p, c in untracked_files.items() if p == args.file or p.startswith(args.file)}
         filtered_files.update(untracked_files)
         skipped_files.extend(skipped_untracked)
+
+    if args.file:
+        abs_target = os.path.abspath(args.file)
+        rel_target = os.path.relpath(abs_target, git_root).replace("\\", "/") if abs_target.startswith(git_root) else args.file.replace("\\", "/")
+        filtered_files = {p: c for p, c in filtered_files.items() if p == rel_target or p.startswith(rel_target + "/")}
 
     if not filtered_files and not skipped_files:
         print(f"## [cross-check] No changes found for: {target_desc}")

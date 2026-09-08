@@ -124,6 +124,11 @@ Supported flags:
 > Working-tree runs (default, `--staged`) keep numeric caps on so the develop
 > loop stays cheap; pass `--no-truncate` there for the whole change.
 
+> **Git Submodule & Gitlink (Mode 160000) Expansion:**
+> When auditing diffs that include submodule pointer bumps (`160000` / `Subproject commit`), the extractor automatically expands the inner commit range (`<old>..<new>`) via native git commands (`git -C <submodule-path> diff`) into concrete file diffs prefixed with `<submodule>/`.
+> - If the submodule is not initialized locally, it gracefully retains the gitlink entry with an explanatory note.
+> - **Scope boundary:** `cross-check` focuses solely on expanding gitlink diffs cleanly. Multi-repository WI tracking and multi-submodule orchestration belong to the calling agent or organizational workflow.
+
 Fallback:
 
 1. `git diff HEAD` (or `git diff --cached` / `git show <COMMIT>`)

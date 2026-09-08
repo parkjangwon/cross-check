@@ -287,5 +287,124 @@ class ReviewProfileTests(unittest.TestCase):
         self.assertIn("working-tree", p)
 
 
+class SubmoduleGitlinkTests(unittest.TestCase):
+    def test_is_gitlink_and_extract_subproject_commits(self):
+        content = (
+            "diff --git a/arch-web b/arch-web\n"
+            "index b3c3826..3c182b5 160000\n"
+            "--- a/arch-web\n"
+            "+++ b/arch-web\n"
+            "@@ -1 +1 @@\n"
+            "-Subproject commit b3c38269dbbcbc609c0554ab70fed7d1e7208873\n"
+            "+Subproject commit 3c182b54c09b6a5f05924c673faf52bf18ad8eb8\n"
+        )
+        self.assertTrue(module.is_gitlink(content))
+        old_sha, new_sha = module.extract_subproject_commits(content)
+        self.assertEqual(old_sha, "b3c38269dbbcbc609c0554ab70fed7d1e7208873")
+        self.assertEqual(new_sha, "3c182b54c09b6a5f05924c673faf52bf18ad8eb8")
+
+    def test_find_submodule_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gitmodules = Path(tmp) / ".gitmodules"
+            gitmodules.write_text(
+                '[submodule "arch-web"]\n\tpath = arch-web\n\turl = ...\n',
+                encoding="utf-8"
+            )
+            prefix = module.find_submodule_prefix(tmp, "arch-web/src/components/Header.tsx")
+            self.assertEqual(prefix, "arch-web")
+            # Path not in submodule
+            self.assertIsNone(module.find_submodule_prefix(tmp, "root-file.ts"))
+
+    def test_expand_submodule_diff_uninitialized_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Submodule dir does not exist locally
+            expanded, skipped, err = module.expand_submodule_diff(
+                tmp, "nonexistent-sub", "b3c3826", "3c182b5"
+            )
+            self.assertIsNone(expanded)
+            self.assertIn("not found or not initialized", err)
+
+    def test_expand_submodule_diff_mocked_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sub_dir = Path(tmp) / "sub"
+            sub_dir.mkdir()
+            (sub_dir / ".git").mkdir()
+
+            mock_inner_diff = (
+                "diff --git a/src/app.ts b/src/app.ts\n"
+                "--- a/src/app.ts\n"
+                "+++ b/src/app.ts\n"
+                "@@ -1,2 +1,2 @@\n"
+                "-old()\n"
+                "+new()\n"
+                "diff --git a/package-lock.json b/package-lock.json\n"
+                "--- a/package-lock.json\n"
+                "+++ b/package-lock.json\n"
+                "@@ -1 +1 @@\n"
+                "-1\n"
+                "+2\n"
+            )
+
+            class FakeProc:
+                returncode = 0
+                stdout = mock_inner_diff
+                stderr = ""
+
+            with patch.object(module.subprocess, "run", return_value=FakeProc()):
+                expanded, skipped, err = module.expand_submodule_diff(
+                    tmp, "sub", "sha1", "sha2"
+                )
+                self.assertIsNone(err)
+                self.assertIn("sub/src/app.ts", expanded)
+                self.assertIn("diff --git a/sub/src/app.ts b/sub/src/app.ts", expanded["sub/src/app.ts"])
+                self.assertIn("--- a/sub/src/app.ts", expanded["sub/src/app.ts"])
+                self.assertIn("+++ b/sub/src/app.ts", expanded["sub/src/app.ts"])
+                # package-lock.json was recognized as noise and skipped
+                self.assertNotIn("sub/package-lock.json", expanded)
+                self.assertIn("sub/package-lock.json", skipped)
+
+    def test_real_submodule_bump_integration(self):
+        import subprocess, sys
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub_repo = Path(tmpdir) / "sub"
+            sub_repo.mkdir()
+            subprocess.run(["git", "init"], cwd=sub_repo, check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=sub_repo, check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=sub_repo, check=True)
+            (sub_repo / "service.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=sub_repo, check=True)
+            subprocess.run(["git", "commit", "-m", "sub v1"], cwd=sub_repo, check=True, stdout=subprocess.DEVNULL)
+            c1 = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=sub_repo, text=True).strip()
+
+            (sub_repo / "service.py").write_text("def helper():\n    return 2\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=sub_repo, check=True)
+            subprocess.run(["git", "commit", "-m", "sub v2"], cwd=sub_repo, check=True, stdout=subprocess.DEVNULL)
+            c2 = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=sub_repo, text=True).strip()
+
+            main_repo = Path(tmpdir) / "main"
+            main_repo.mkdir()
+            subprocess.run(["git", "init"], cwd=main_repo, check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=main_repo, check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=main_repo, check=True)
+            (main_repo / "main.py").write_text("# root\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=main_repo, check=True)
+            subprocess.run(["git", "commit", "-m", "root init"], cwd=main_repo, check=True, stdout=subprocess.DEVNULL)
+
+            subprocess.run(["git", "-c", "protocol.file.allow=always", "submodule", "add", str(sub_repo), "arch-web"], cwd=main_repo, check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "checkout", c1], cwd=main_repo / "arch-web", check=True, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "add", "arch-web"], cwd=main_repo, check=True)
+            subprocess.run(["git", "commit", "-m", "add sub at v1"], cwd=main_repo, check=True, stdout=subprocess.DEVNULL)
+
+            subprocess.run(["git", "checkout", c2], cwd=main_repo / "arch-web", check=True, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "add", "arch-web"], cwd=main_repo, check=True)
+            subprocess.run(["git", "commit", "-m", "bump arch-web to v2"], cwd=main_repo, check=True, stdout=subprocess.DEVNULL)
+            bump_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=main_repo, text=True).strip()
+
+            res = subprocess.run([sys.executable, str(SCRIPT), "--commit", bump_sha], cwd=main_repo, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("arch-web/service.py", res.stdout)
+            self.assertIn("return 2", res.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

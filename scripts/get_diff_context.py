@@ -415,7 +415,7 @@ def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_s
                     # Skip the definition file itself
                     if caller_file == source_file:
                         continue
-                    if is_ignored(caller_file):
+                    if is_ignored(caller_file) or not is_code_file(caller_file):
                         continue
                     callers.append((caller_file, line_no, content))
                     caller_files.append(caller_file)

@@ -148,25 +148,22 @@ For framework-specific behavior, consult `references/language_guidance.md`. If s
 
 ## 🎯 Caller / Blast-Radius Rules
 
-Caller discovery is a **candidate generator, not proof**. `git grep` may find textual references that are not semantic calls and may miss reflection, generated code, dynamic dispatch, or framework wiring.
+Caller discovery is a **candidate generator, not proof**. `git grep` finds textual references across code files, which may include non-invocation mentions.
 
-For each material API/behavior change:
+**You (the reviewing LLM) must apply semantic judgment before reporting caller impact:**
 
-1. Identify direct callers from extractor output or repository search.
-2. Inspect representative callers, especially security-sensitive and high-frequency paths.
-3. Distinguish definition/reference from actual invocation before claiming a contract break.
-4. If semantic resolution is unavailable, explicitly say so and lower confidence.
-5. For a bug fix, inspect sibling callers before declaring the root cause fixed.
-
-**Broadly-referenced names are handled separately.** The extractor suppresses the
-per-file caller samples for symbols that match across a large share of the
-codebase (e.g. a common helper, framework hook, or a language builtin surfaced by
-symbol extraction). For such names a call site list would be noise, not evidence:
-do **not** treat their absence as "no callers to check". If you genuinely suspect
-a contract drift on a changed commonly-used name, run
-`git grep -n -w "<name>"` yourself and reason about the specific high-value
-callers (security-sensitive, hot paths). Do not claim blast radius is clear for a
-name the extractor flagged as broadly referenced.
+1. **Filter Non-Invocation Mentions**:
+   - Disregard build tool / wrapper mentions (e.g. `gradlew`, `./gradlew run`, `npm run`, CLI shell commands).
+   - Disregard comments, docstrings, string literals, logging messages, and variable names that merely match the symbol textually.
+   - Only count genuine call sites (e.g. `obj.method()`, `func()`) as caller candidates.
+2. **Contextual Triage for Common Verbs**:
+   - Symbols like `run()`, `start()`, `execute()`, `handle()` often appear in multiple unrelated subsystems or task runners.
+   - Trace callers **only** within the relevant subsystem, interface, or caller blast radius. Do not pollute the report with unrelated callers that happen to share a common name.
+3. **Inspect Contract Drift**:
+   - Distinguish benign calls from genuine contract breakage (e.g. caller dereferencing a newly-nullable return, unhandled exceptions, stricter preconditions).
+4. **Broadly-referenced names are handled separately**:
+   - The extractor suppresses per-file caller samples for symbols matching across many files. For such names, do not treat their absence as "no callers". If you suspect contract drift, run targeted searches on high-value paths.
+5. **If semantic resolution is unavailable**, explicitly say so and lower confidence rather than guessing.
 
 ## 🚦 Deterministic Verdict Policy
 

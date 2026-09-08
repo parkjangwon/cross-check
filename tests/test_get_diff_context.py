@@ -103,6 +103,33 @@ diff --git a/package-lock.json b/package-lock.json
             self.assertIn("process_request", radius)
             self.assertEqual("caller.py", radius["process_request"]["samples"][0][0])
 
+    def test_find_blast_radius_ignores_non_code_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "service.py").write_text("def run(value):\n    return value\n", encoding="utf-8")
+            diff = """diff --git a/service.py b/service.py
+--- a/service.py
++++ b/service.py
+@@ -1,2 +1,2 @@
+ def run(value):
+-    return value
++    return value.strip()
+"""
+            files = {"service.py": diff}
+
+            class FakeResult:
+                returncode = 0
+                stdout = "README.md:42: run `python app.py`\ncaller.py:10: run('x')\n"
+                stderr = ""
+
+            with patch.object(module.subprocess, "run", return_value=FakeResult()):
+                radius = module.find_blast_radius(tmp, files)
+
+            self.assertIn("run", radius)
+            sample_files = [s[0] for s in radius["run"]["samples"]]
+            self.assertNotIn("README.md", sample_files)
+            self.assertIn("caller.py", sample_files)
+
     def test_untracked_files_are_synthesized_as_diff(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

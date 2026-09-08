@@ -195,15 +195,24 @@ to the user's language per policy, but keep the machine tokens stable.
 
 **The default report is intentionally minimal — three blocks only:**
 1. **Verdict + 1-line human summary.**
-2. **A single valid JSON `findings` block** (tag / confidence / file:line /
-   1-line issue / 1-line fix / `blocks`), consumed verbatim by the agent for the
-   next step. Zero findings → render `Solid & Lean. Clean to ship.`
+2. **A single valid JSON `findings` block**, consumed verbatim by the agent for
+   the next step. Zero findings → render `Solid & Lean. Clean to ship.`
 3. **Next-action gate** — always ask, never end silently:
    `[1] 수정 진행 [2] 여기서 마무리 [3] 상세 열람`.
    A bare cross-check must hand the decision back to the human.
 
-Keep every finding to **one dense line** in the JSON; do not duplicate rationale
-in prose. Blast/caller detail, vulnerable code, and full evidence are expanded
-**only on request** (the `[3]` drill-down), not in the default output.
+**Finding shape (see report_template):** every finding carries `tag`,
+`confidence`, `location`, a 1-line `issue`, a 1-line `fix`, and `blocks`. When
+`confidence` is **MEDIUM or HIGH** (a finding that could actually drive a fix)
+also include **`why`** — one dense line of the causal chain / evidence that makes
+it a real defect — and, where useful, a short **`trace`** pointer so the agent
+can reproduce it. LOW/taste-level findings stay at `issue` + `fix` with no `why`.
+
+Why this matters: if the human picks **[1]** the agent edits **with
+understanding**, not by blindly pasting the `fix` string. A MEDIUM carrying only
+a bare `fix` invites a context-free edit.
+
+Blast/caller detail, vulnerable code, and full evidence are expanded **only on
+request** (the `[3]` drill-down), not in the default output.
 
 Do not add filler prose or reproduce the diff.

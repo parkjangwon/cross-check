@@ -31,7 +31,9 @@ of reading a wall of prose. Effort goes into the *findings*, not the prose.
       "confidence": "HIGH",
       "location": "AuthService.java:89",
       "issue": "<1 line — what's wrong, concrete path to impact>",
+      "why": "<1 line — why this is a real defect (MEDIUM+ only, give the causal chain>",
       "fix": "<1 line — minimal conservative fix>",
+      "trace": "<short pointer: caller/flow/probe that proves it; optional>",
       "blocks": true
     }
   ],
@@ -64,6 +66,21 @@ repeat a finding's rationale in both the JSON and prose.
 
 - Every finding must carry `tag`, `confidence`, `location`, 1-line `issue`, 1-line
   `fix`, and `blocks` (whether it alone would flip to BLOCKED).
+- **`why` + `trace` are optional keys; default to omitting them.** Include both
+  when the finding **could actually drive a fix** — i.e. `confidence` is MEDIUM
+  or HIGH:
+  - `why` — *one* dense line of the causal chain / the evidence that makes this a
+    real defect (a concrete path to impact, not "this could be a problem").
+  - `trace` — optional short pointer to prove it (e.g. the caller `file:sym` it
+    breaks, or the probe). Helps the agent reproduce before editing.
+  - **Purpose**: when the human picks **[1] (fix it)** or asks the agent to apply
+    a finding, the agent must edit *with understanding* — not blindly paste
+    `fix`. A MEDIUM finding carrying only a one-line `fix` invites a naive,
+    context-free edit.
+  - LOW / taste-level (YAGNI/style) findings stay one-line (`issue` + `fix`) with
+    **no `why`** — they never block, so a minimal line is enough.
+- Do not reproduce a finding's full rationale twice: `why` is one dense line, and
+  the full evidence / vulnerable-code expansion lives behind the `[3]` drill-down.
 - Verdict rule recap:
   - 🔴 BLOCKED — at least one HIGH-confidence production-significant security /
     crash / leak / race / data-corruption / caller-contract defect.

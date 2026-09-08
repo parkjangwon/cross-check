@@ -22,7 +22,22 @@ This is a **post-change safety gate**, not a full-project SAST replacement. Insp
    - Rung 4: **Minimalism** — choose the shortest readable, battle-tested implementation.
 4. **Root Cause over Symptom**: A bug fix must protect the shared root cause, not only one observed caller.
 5. **Preserve Safety-Critical Code**: Never simplify away trust-boundary validation, deterministic cleanup, meaningful error propagation/logging, rollback, or required synchronization.
-6. **Language-Agnostic Invariants, Semantic Review**: Apply universal invariants everywhere, but use `references/language_guidance.md` to avoid language/framework false positives.
+6. **Language-Neutral Core**: Cross-check reasons about **changes, contracts, boundaries, and risk**, not ASTs or language-specific semantic models. Do not introduce or require AST parsing, language parsers, or semantic call graphs in the core workflow.
+7. **Guidance, Not Parsers**: `references/language_guidance.md` may help interpret known language/framework behavior, but it must narrow false positives rather than turn Cross-Check into a language-specific analyzer.
+
+## 🌐 User-Language Output Policy
+
+The **review decision is language-neutral; the human-facing report is localized**.
+
+- Respond in the language the user is using for the current request.
+- If the user explicitly asks for another output language, follow that request.
+- Keep machine-stable values unchanged: verdicts (`BLOCKED`, `CONDITIONAL PASS`, `PASS`), confidence (`HIGH`, `MEDIUM`, `LOW`), and tags (`leak:`, `race:`, `caller:`, etc.).
+- Translate headings, explanations, scenarios, impact, and recommendations into the user's language.
+- Preserve code, file paths, symbol names, commands, and identifiers exactly as written.
+- Do not build a translation subsystem or language-detection dependency. The active AI agent's conversation language is the source of truth.
+- If the language cannot be determined reliably, use English.
+
+This localization changes **presentation only**. It must never change the underlying evidence, confidence, findings, or verdict.
 
 ## 🔎 Evidence & Confidence Policy
 
@@ -113,7 +128,9 @@ Use when no HIGH/MEDIUM safety or security findings remain. LOW-confidence obser
 
 ## 📋 Step 3: Produce the Report
 
-Follow `references/report_template.md` exactly. Keep findings dense and actionable. Every finding should include:
+Follow `references/report_template.md` exactly. Localize the human-facing prose to the user's language according to the policy above.
+
+Keep findings dense and actionable. Every finding should include:
 
 - tag;
 - confidence;
@@ -122,4 +139,4 @@ Follow `references/report_template.md` exactly. Keep findings dense and actionab
 - blast radius;
 - conservative fix.
 
-If clean, report zero findings and conclude: **"Solid & Lean. Clean to ship."** Do not add filler prose.
+If clean, report zero findings and conclude with the localized equivalent of **"Solid & Lean. Clean to ship."** Do not add filler prose.

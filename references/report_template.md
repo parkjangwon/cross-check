@@ -1,6 +1,15 @@
 # Cross-Check Review Report Format
 
-Review responses must be concise, evidence-based, and actionable. Do not manufacture certainty.
+Review responses must be concise, evidence-based, actionable, and written in the user's language.
+
+## Localization Rules
+
+- Use the language of the user's current request for all human-facing prose.
+- Keep stable machine-readable values unchanged: `BLOCKED`, `CONDITIONAL PASS`, `PASS`; `HIGH`, `MEDIUM`, `LOW`; and finding tags such as `leak:`, `race:`, `caller:`, `sec:`.
+- Translate headings, issue descriptions, impact, evidence explanations, and recommendations.
+- Never translate code, file paths, symbol names, commands, identifiers, or verdict/confidence/tag tokens.
+- Localization must not alter findings, evidence, confidence, or verdict.
+- Do not add a translation framework or language-specific template set. The active AI agent's conversation language is sufficient.
 
 ```markdown
 # 🛡️ Cross-Check Security & Stability Review

@@ -48,6 +48,18 @@ LOW-confidence observations never block a review. Language/framework-specific gu
 
 ---
 
+## 🌍 Language-Neutral Core, Localized Reports
+
+Cross-check's **analysis is language-neutral**. It does not require AST parsing, language-specific semantic engines, or a translation subsystem.
+
+The AI agent keeps the stable review values unchanged — `BLOCKED`, `CONDITIONAL PASS`, `PASS`, confidence levels, and finding tags — while presenting the human-facing report in the **language of the user's request**.
+
+Code, file paths, symbols, commands, and identifiers are always preserved as written. Localization affects presentation only; it never changes evidence, findings, confidence, or verdict.
+
+This keeps the core small while making the result natural for teams working in Korean, English, or other languages.
+
+---
+
 ## 🚦 Verdicts
 
 | Verdict | Meaning |
@@ -108,6 +120,8 @@ m.mu.Unlock()
 ```
 ```
 
+The same report is rendered in the user's language when the review is requested in another language. Stable verdicts, tags, paths, and code remain unchanged.
+
 ---
 
 ## 💬 Usage
@@ -118,6 +132,8 @@ Ask your agent naturally in English or Korean:
 - *"Audit staged changes against enterprise invariants."*
 - *"Cross-check commit `a1b2c3d` before merging."*
 - *(한국어: "방금 수정한 코드 장애 유발 요인이랑 오버엔지니어링 크로스체크해줘.")*
+
+The response follows the language of the request without requiring any extra configuration.
 
 ---
 
@@ -152,7 +168,7 @@ GitHub Actions runs the suite on Python 3.9, 3.11, and 3.13 for every push and p
 
 - `references/enterprise_checklist.md` — universal invariants, confidence policy, and verdict mapping.
 - `references/language_guidance.md` — Java/JVM, Go, Rust, C/C++, Python, TypeScript/JavaScript, and framework-aware review guidance.
-- `references/report_template.md` — standardized high-density review output.
+- `references/report_template.md` — standardized high-density review output and localization policy.
 
 ---
 

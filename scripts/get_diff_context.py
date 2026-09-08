@@ -47,6 +47,19 @@ IGNORED_PATTERNS = [
     ".gitignore",
     ".gitattributes",
     ".editorconfig",
+    # IDE & Editor files
+    ".idea/*",
+    ".vscode/*",
+    ".settings/*",
+    "*.iml",
+    ".DS_Store",
+    "Thumbs.db",
+    # Logs & Temporary files
+    "*.log",
+    "*.tmp",
+    "*.bak",
+    "*.swp",
+    "*.swo",
     "node_modules/*",
     "*.svg",
     "*.png",
@@ -67,6 +80,8 @@ def run_command(cmd, cwd=None):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=cwd,
             check=True
         )
@@ -110,7 +125,7 @@ def has_commit(ref="HEAD"):
     )
     return res.returncode == 0
 
-def build_diff_command(args):
+def build_diff_command(args, git_root):
     """Build git diff command based on user options."""
     cmd = ["git", "diff", "--no-color", "--unified=3"]
     target_desc = ""
@@ -138,8 +153,14 @@ def build_diff_command(args):
             target_desc = "Working tree (unstaged changes, no HEAD commit yet)"
 
     if args.file:
-        cmd.extend(["--", args.file])
-        target_desc += f" (filter: {args.file})"
+        raw_file = args.file
+        abs_target = os.path.abspath(raw_file)
+        if abs_target.startswith(git_root):
+            rel_to_root = os.path.relpath(abs_target, git_root).replace("\\", "/")
+        else:
+            rel_to_root = raw_file.replace("\\", "/")
+        cmd.extend(["--", rel_to_root])
+        target_desc += f" (filter: {rel_to_root})"
 
     return cmd, target_desc
 
@@ -198,6 +219,8 @@ COMMON_EXCLUDED_METHOD_NAMES = {
     "hashCode", "constructor", "run", "test", "get", "set", "true", "false", "null",
     "return", "this", "super", "export", "default", "class", "interface", "struct",
     "enum", "type", "void", "string", "int", "boolean", "new", "lambda", "render",
+    "not", "and", "or", "is", "in", "raise", "try", "except", "finally", "assert",
+    "with", "yield", "pass", "break", "continue", "import", "from", "as", "global", "nonlocal",
     # Framework lifecycle
     "created", "mounted", "updated", "destroyed", "beforeCreate", "beforeMount",
     "onMounted", "onUnmounted", "computed", "watch", "setup", "data", "props",
@@ -298,10 +321,12 @@ def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_s
         # Run git grep to find usages across repo
         try:
             grep_res = subprocess.run(
-                ["git", "grep", "-n", "-w", sym],
+                ["git", "grep", "--no-color", "-n", "-w", sym],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 cwd=git_root
             )
             if grep_res.returncode != 0 or not grep_res.stdout.strip():
@@ -422,7 +447,7 @@ def main():
     args = parser.parse_args()
 
     git_root = get_git_root()
-    diff_cmd, target_desc = build_diff_command(args)
+    diff_cmd, target_desc = build_diff_command(args, git_root)
 
     raw_diff = run_command(diff_cmd, cwd=git_root)
 
@@ -430,7 +455,9 @@ def main():
         if not (args.commit or args.range or args.staged):
             fallback_cmd = ["git", "diff", "--no-color", "--unified=3"]
             if args.file:
-                fallback_cmd.extend(["--", args.file])
+                abs_f = os.path.abspath(args.file)
+                rel_f = os.path.relpath(abs_f, git_root).replace("\\", "/") if abs_f.startswith(git_root) else args.file
+                fallback_cmd.extend(["--", rel_f])
             raw_diff = run_command(fallback_cmd, cwd=git_root)
             target_desc = "Working tree (unstaged)"
 

@@ -34,23 +34,26 @@ In an on-premise enterprise environment, a single patch containing a crash, a re
 Execute the bundled diff extractor script or run standard git commands to collect the exact changes:
 
 ```bash
-# Case A: Default (Working tree: staged + unstaged changes vs HEAD)
-python3 <skill-dir>/scripts/get_diff_context.py
+# Option 1 (Standard): Run via installed global skill path
+python3 ~/.agents/skills/cross-check/scripts/get_diff_context.py [flags]
 
-# Case B: Staged changes only
-python3 <skill-dir>/scripts/get_diff_context.py --staged
+# Option 2 (Local): Run inside the skill directory
+python3 scripts/get_diff_context.py [flags]
 
-# Case C: Specific commit inspection
-python3 <skill-dir>/scripts/get_diff_context.py --commit <COMMIT_HASH>
-
-# Case D: Branch or commit range
-python3 <skill-dir>/scripts/get_diff_context.py --range <BASE>..<HEAD>
-
-# Case E: Specific file
-python3 <skill-dir>/scripts/get_diff_context.py --file <PATH>
+# Supported flags:
+#   (default)               : Staged + unstaged changes + untracked files vs HEAD
+#   --staged                : Staged changes only
+#   --commit <HASH>         : Specific commit inspection
+#   --range <BASE>..<HEAD>  : Branch or commit range
+#   --file <PATH>           : Target a specific file (auto-resolved from any subdirectory)
+#   --no-truncate           : Disable diff line limits (default caps at 400 lines/file, 1200 total)
+#   --skip-callers          : Skip external caller blast-radius discovery
 ```
 
-> **Note**: If `get_diff_context.py` is not directly accessible, run standard `git diff` commands (`git diff HEAD`, `git diff --cached`, or `git show <COMMIT>`) while ignoring lockfiles (`package-lock.json`, `yarn.lock`, etc.).
+> **Fallback**: If `get_diff_context.py` cannot be executed, run standard git commands:
+> 1. `git diff HEAD` (or `git diff --cached` / `git show <COMMIT>`)
+> 2. `git status --porcelain` (to catch untracked new files)
+> 3. For modified methods, run `git grep -n -w "<methodName>"` across the repo to discover callers.
 
 ---
 

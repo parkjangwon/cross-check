@@ -1,101 +1,77 @@
-# Cross-Check Review Report Format
+# Cross-Check Review Report Format (minimal, JSON-core)
 
-Review responses must be concise, evidence-based, actionable, and written in the user's language.
+Goal: emit a **short, parseable, decision-ready** report. Every review ends with
+an explicit next-action gate so the human only answers one short prompt instead
+of reading a wall of prose. Effort goes into the *findings*, not the prose.
 
 ## Localization Rules
 
-- Use the language of the user's current request for all human-facing prose.
-- Keep stable machine-readable values unchanged: `BLOCKED`, `CONDITIONAL PASS`, `PASS`; `HIGH`, `MEDIUM`, `LOW`; and finding tags such as `leak:`, `race:`, `caller:`, `sec:`.
-- Translate headings, issue descriptions, impact, evidence explanations, and recommendations.
-- Never translate code, file paths, symbol names, commands, identifiers, or verdict/confidence/tag tokens.
-- Localization must not alter findings, evidence, confidence, or verdict.
-- Do not add a translation framework or language-specific template set. The active AI agent's conversation language is sufficient.
+- Human-facing prose is in the user's language; keep code/paths/identifiers and
+  machine tokens (`BLOCKED`/`CONDITIONAL PASS`/`PASS`, `HIGH`/`MEDIUM`/`LOW`,
+  tags like `leak:` `sec:` `caller:`) as-is. No translation subsystem.
+- Localization never changes findings, verdict, or confidence.
+
+## Output shape (STOP after these three blocks; no filler)
 
 ```markdown
-# 🛡️ Cross-Check Security & Stability Review
+## 💬 Verdict
+**Verdict**: 🔴 BLOCKED | 🟡 CONDITIONAL PASS | 🟢 PASS
+**Summary (1 sentence, human language)**: <what's the one thing they must know>
 
-- **Target Scope**: [Working Tree | Staged | Commit <hash> | Range <base>..<head>]
-- **Audited Files**: N file(s)
-- **Scoreboard**: 🚨 [X] Critical | ⚠️ [Y] Warning | 🧹 [Z] YAGNI | net: [-N lines possible]
-- **Confidence**: HIGH [X] | MEDIUM [Y] | LOW [Z]
-- **Verdict**: [ 🔴 BLOCKED | 🟡 CONDITIONAL PASS | 🟢 PASS ]
-
----
-
-## ⚡ Quick Scan
-
-> Format: `<file>:L<line>: <tag> [HIGH|MEDIUM|LOW] <what's wrong>. <immediate fix>.`
-
-- `SecurityManager.java:L42-55: leak: [HIGH] InputStream escapes without deterministic close on error. Use try-with-resources.`
-- `AuthService.java:L89: caller: [MEDIUM] timeout now returns null; caller L91 dereferences it. Guard or preserve the previous contract.`
-- `RuleEngine.java:L12-70: yagni: [LOW] abstraction appears to have one consumer. Verify DI/test/plugin boundary before removing.`
-
-If clean:
-`None. All diff hunks pass safety standards.`
-
----
-
-## 🚨 Critical Issues
-
-(Only HIGH-confidence production-significant blockers belong here.)
-
-### 1. [filepath:line] Concise Issue Title
-- **Confidence**: HIGH
-- **Cause & Blast Radius**: Concrete execution path and affected callers/users/resources.
-- **Evidence**: Why the diff/context establishes the defect.
-- **Vulnerable Code**:
-```[language]
-// Problematic code
-```
-- **Conservative Fix**:
-```[language]
-// Minimal safe fix
+## 🔍 Findings (machine-readable — the agent consumes this verbatim)
+```json
+{
+  "verdict": "BLOCKED",
+  "scope": "<target desc>",
+  "files_audited": <n>,
+  "confidence": { "HIGH": <n>, "MEDIUM": <n>, "LOW": <n> },
+  "findings": [
+    {
+      "tag": "sec:auth-bypass",
+      "confidence": "HIGH",
+      "location": "AuthService.java:89",
+      "issue": "<1 line — what's wrong, concrete path to impact>",
+      "fix": "<1 line — minimal conservative fix>",
+      "blocks": true
+    }
+  ],
+  "changed_contracts": ["method(): now returns null on timeout" ]
+}
 ```
 
-If none: `None detected.`
-
----
-
-## ⚠️ Warning Issues
-
-Include MEDIUM-confidence credible risks and HIGH-confidence issues that do not meet the blocking threshold. LOW-confidence concerns should be clearly labeled and should not block the verdict.
-
-### 1. [filepath:line] Concise Issue Title
-- **Confidence**: MEDIUM
-- **Risk**: Concrete edge case or operational consequence.
-- **Why not proven**: Missing runtime/framework/semantic evidence.
-- **Recommendation**: Minimal validation or conservative fix.
-
----
-
-## 🧹 Over-Engineering & YAGNI Findings
-
-YAGNI is advisory unless it creates a concrete correctness/security/operational risk.
-
-- `[filepath:line] yagni: [LOW] ...`
-- `[filepath:line] stdlib: [MEDIUM] ...`
-
-Do not recommend deleting abstractions solely because they currently have one implementation. Check DI, testing seams, framework contracts, plugin boundaries, and domain ownership.
-
----
-
-## 🎯 Caller & Blast-Radius Notes
-
-- **Changed contracts**: [None | concise list]
-- **Caller evidence**: [direct callers inspected / textual candidates only / semantic tooling unavailable]
-- **Sibling paths checked**: [Yes/No + reason]
-
----
-
-## 💡 Net Impact & Verdict Summary
-
-- **Net code change**: `-<N> lines` (only if a concrete simplification is recommended)
-- **Bottom line**: [One clear sentence explaining why the verdict is PASS, CONDITIONAL PASS, or BLOCKED.]
-
-### Verdict Rules
-- 🔴 BLOCKED = HIGH-confidence production-significant security, crash, leak, race/deadlock, data-corruption, or caller-contract defect.
-- 🟡 CONDITIONAL PASS = no HIGH blocker, but a credible MEDIUM-confidence safety/security/stability/contract risk remains.
-- 🟢 PASS = no HIGH/MEDIUM safety or security findings; LOW and subjective style findings do not block.
-
-If there are no issues: **Solid & Lean. Clean to ship.**
+## ✅ Next action (ask, then stop — do not auto-act)
 ```
+조치를 선택하세요:
+ [1] 수정 진행 — 위 findings 중 잡을 것 (사람/에이전트 지정)
+ [2] 그대로 두고 여기서 마무리
+ [3] 상세 열람 — 특정 finding의 근거/코드 전문
+```
+- If verdict is **BLOCKED**/**CONDITIONAL PASS**, the gate is mandatory.
+- If verdict is **PASS** and there are **zero findings**, skip Findings JSON and
+  just output: `Solid & Lean. Clean to ship.` then the gate ([2] default).
+- The gate belongs to **every** report — a bare cross-check should always hand
+  the decision back, never end silently.
+
+## When to expand beyond the JSON
+
+Only when asked (by the human or a [3] drill-down). Then per-finding expand to:
+evidence path, vulnerable code, conservative fix code, and sibling callers. The
+**default report is the three blocks above.** Do not reproduce the whole diff or
+repeat a finding's rationale in both the JSON and prose.
+```
+
+## Guiding rules
+
+- Every finding must carry `tag`, `confidence`, `location`, 1-line `issue`, 1-line
+  `fix`, and `blocks` (whether it alone would flip to BLOCKED).
+- Verdict rule recap:
+  - 🔴 BLOCKED — at least one HIGH-confidence production-significant security /
+    crash / leak / race / data-corruption / caller-contract defect.
+  - 🟡 CONDITIONAL PASS — no HIGH blocker but a credible MEDIUM risk remains.
+  - 🟢 PASS — no HIGH/MEDIUM safety/security findings.
+    LOW-confidence and taste-level (YAGNI/style) findings never block.
+- `changed_contracts` is optional but include any nullability / error / behavior
+  drift that callers must honor; leave empty if none.
+- Do **not** invent defects from mere unusual patterns; the JSON issue line must
+  name the concrete path from changed code to impact.
+- Keep JSON valid — no markdown fences inside string values, escape quotes.

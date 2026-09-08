@@ -190,15 +190,20 @@ Use when no HIGH/MEDIUM safety or security findings remain. LOW-confidence obser
 
 ## 📋 Step 3: Produce the Report
 
-Follow `references/report_template.md` exactly. Localize the human-facing prose to the user's language according to the policy above.
+Follow `references/report_template.md` exactly. Localize the human-facing prose
+to the user's language per policy, but keep the machine tokens stable.
 
-Keep findings dense and actionable. Every finding should include:
+**The default report is intentionally minimal — three blocks only:**
+1. **Verdict + 1-line human summary.**
+2. **A single valid JSON `findings` block** (tag / confidence / file:line /
+   1-line issue / 1-line fix / `blocks`), consumed verbatim by the agent for the
+   next step. Zero findings → render `Solid & Lean. Clean to ship.`
+3. **Next-action gate** — always ask, never end silently:
+   `[1] 수정 진행 [2] 여기서 마무리 [3] 상세 열람`.
+   A bare cross-check must hand the decision back to the human.
 
-- tag;
-- confidence;
-- file and line;
-- concrete failure/exploit scenario;
-- blast radius;
-- conservative fix.
+Keep every finding to **one dense line** in the JSON; do not duplicate rationale
+in prose. Blast/caller detail, vulnerable code, and full evidence are expanded
+**only on request** (the `[3]` drill-down), not in the default output.
 
-If clean, report zero findings and conclude with the localized equivalent of **"Solid & Lean. Clean to ship."** Do not add filler prose.
+Do not add filler prose or reproduce the diff.

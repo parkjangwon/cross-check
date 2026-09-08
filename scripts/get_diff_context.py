@@ -42,8 +42,11 @@ IGNORED_PATTERNS = [
     "*.min.css",
     "*.map",
     "*.bundle.js",
-    # Generated / Meta
+    # Generated / Meta & Config
     ".git/*",
+    ".gitignore",
+    ".gitattributes",
+    ".editorconfig",
     "node_modules/*",
     "*.svg",
     "*.png",

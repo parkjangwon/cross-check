@@ -1,105 +1,89 @@
-# Cross-Check Review Report Format (minimal, JSON-core)
+# Cross-Check Review Report Format (The Golden Balance)
 
-Goal: emit a **short, parseable, decision-ready** report. Every review ends with
-an explicit next-action gate so the human only answers one short prompt instead
-of reading a wall of prose. Effort goes into the *findings*, not the prose.
+Goal: Emit a **dense, structured Markdown report** that a human reviewer can scan in **3 to 5 seconds** and an agent can parse and execute deterministically. No JSON clutter, no verbose essays.
 
-## Localization Rules
+---
 
-- Human-facing prose is in the user's language; keep code/paths/identifiers and
-  machine tokens (`BLOCKED`/`CONDITIONAL PASS`/`PASS`, `HIGH`/`MEDIUM`/`LOW`,
-  tags like `leak:` `sec:` `caller:`) as-is. No translation subsystem.
-- The **next-action gate labels** are human-facing prose too — render `[1] [2]
-  [3]` descriptor text in the user's language (only the `[n]` numeric tokens stay
-  fixed). The sample blocks in this file are examples, not a fixed Korean/English
-  UI.
-- Localization never changes findings, verdict, or confidence.
+## 🌐 Dynamic Localization Rules
 
-## Output shape (STOP after these three blocks; no filler)
+- **Match User Language**: The report's human-facing prose, section headers, explanations, and next-action prompt must automatically match the **language of the user's prompt** (e.g., Korean if prompted in Korean, English if prompted in English, etc.).
+- **Keep Technical Tokens Invariant**: Never translate machine tokens, code symbols, or file paths:
+  - Verdicts: `BLOCKED`, `CONDITIONAL PASS`, `PASS`
+  - Confidence: `[HIGH]`, `[MEDIUM]`, `[LOW]`
+  - Tags: `leak:`, `race:`, `npe:`, `caller:`, `sec:`, `swallow:`, `yagni:`, `shrink:`, `stdlib:`
+  - File paths, line numbers, function signatures, code snippets.
+
+---
+
+## 📋 Standard Output Shape
 
 ```markdown
-## 💬 Verdict
-**Verdict**: 🔴 BLOCKED | 🟡 CONDITIONAL PASS | 🟢 PASS
-**Summary (1 sentence, human language)**: <what's the one thing they must know>
+# 🛡️ Cross-Check Review
 
-## 🔍 Findings (machine-readable — the agent consumes this verbatim)
-```json
-{
-  "verdict": "BLOCKED",
-  "scope": "<target desc>",
-  "files_audited": <n>,
-  "confidence": { "HIGH": <n>, "MEDIUM": <n>, "LOW": <n> },
-  "findings": [
-    {
-      "tag": "sec:auth-bypass",
-      "confidence": "HIGH",
-      "location": "AuthService.java:89",
-      "issue": "<1 line — what's wrong, concrete path to impact>",
-      "why": "<1 line — why this is a real defect (MEDIUM+ only, give the causal chain>",
-      "fix": "<1 line — minimal conservative fix>",
-      "trace": "<short pointer: caller/flow/probe that proves it; optional>",
-      "blocks": true
-    }
-  ],
-  "changed_contracts": ["method(): now returns null on timeout" ]
-}
+- **Verdict**: [ 🔴 BLOCKED | 🟡 CONDITIONAL PASS | 🟢 PASS ]
+- **Summary**: <1 sentence in user's language — the single most important takeaway>
+- **Scope**: `<target desc>` (N file(s) audited)
+
+---
+
+### 🚨 Actionable Findings
+
+1. **[HIGH] <tag>** (`<filepath>:<line>`)
+   - **Issue**: <1 line — what is broken and the concrete failure path>
+   - **Why**: <1 line — causal chain and proof why this causes a crash, leak, or vulnerability (required for MEDIUM+)>
+   - **Fix**: <1 line — minimal, conservative, rock-solid fix>
+   - **Trace**: `<optional pointer to caller site or probe that demonstrates it>`
+
+2. **[MEDIUM] <tag>** (`<filepath>:<line>`)
+   - **Issue**: <1 line — edge case, contract drift, or unhandled condition>
+   - **Why**: <1 line — causal chain>
+   - **Fix**: <1 line — conservative fix>
+
+3. **[LOW] <tag>** (`<filepath>:<line>`)
+   - **Issue**: <1 line — minor observation, YAGNI simplification, or style defect>
+   - **Fix**: <1 line — simplified alternative>
+
+---
+
+👉 **Next Step**: <Natural prompt in user's language asking which finding to fix (e.g. "Tell me which numbers to fix like 'Fix #1', or say 'looks good, merge' if intended.")>
 ```
 
-## ✅ Next action (ask, then stop — do not auto-act)
-Render the three labels in the **user's own language** (only the `[n]` numeric
-tokens are invariant). Example shown in English:
+---
 
-```
-[1] Apply fixes — pick which finding(s) to fix
-[2] Done — leave as-is here
-[3] Details — full evidence/code for a finding
-```
+## 🟢 Clean / Zero-Findings Case
 
-> If the user wrote in Korean, render it `[1] 수정 진행 [2] 여기서 마무리
-> [3] 상세 열람` — the labels are localized prose, `[n]` stays fixed.
+If verdict is **🟢 PASS** and there are **zero findings**, omit the Findings section entirely and output:
 
-- If verdict is **BLOCKED**/**CONDITIONAL PASS**, the gate is mandatory.
-- If verdict is **PASS** and there are **zero findings**, skip Findings JSON and
-  just output the localized `Solid & Lean. Clean to ship.`-equivalent, then the
-  gate ([2] default).
-- The gate belongs to **every** report — a bare cross-check should always hand
-  the decision back, never end silently.
+```markdown
+# 🛡️ Cross-Check Review
 
-## When to expand beyond the JSON
+- **Verdict**: 🟢 PASS
+- **Scope**: `<target desc>` (N file(s) audited)
 
-Only when asked (by the human or a [3] drill-down). Then per-finding expand to:
-evidence path, vulnerable code, conservative fix code, and sibling callers. The
-**default report is the three blocks above.** Do not reproduce the whole diff or
-repeat a finding's rationale in both the JSON and prose.
+Solid & Lean. Clean to ship.
+
+👉 **Next Step**: <Ready to merge. Say "proceed to merge" or let me know if you want to inspect specific files.>
 ```
 
-## Guiding rules
+---
 
-- Every finding must carry `tag`, `confidence`, `location`, 1-line `issue`, 1-line
-  `fix`, and `blocks` (whether it alone would flip to BLOCKED).
-- **`why` + `trace` are optional keys; default to omitting them.** Include both
-  when the finding **could actually drive a fix** — i.e. `confidence` is MEDIUM
-  or HIGH:
-  - `why` — *one* dense line of the causal chain / the evidence that makes this a
-    real defect (a concrete path to impact, not "this could be a problem").
-  - `trace` — optional short pointer to prove it (e.g. the caller `file:sym` it
-    breaks, or the probe). Helps the agent reproduce before editing.
-  - **Purpose**: when the human picks **[1] (fix it)** or asks the agent to apply
-    a finding, the agent must edit *with understanding* — not blindly paste
-    `fix`. A MEDIUM finding carrying only a one-line `fix` invites a naive,
-    context-free edit.
-  - LOW / taste-level (YAGNI/style) findings stay one-line (`issue` + `fix`) with
-    **no `why`** — they never block, so a minimal line is enough.
-- Do not reproduce a finding's full rationale twice: `why` is one dense line, and
-  the full evidence / vulnerable-code expansion lives behind the `[3]` drill-down.
-- Verdict rule recap:
-  - 🔴 BLOCKED — at least one HIGH-confidence production-significant security /
-    crash / leak / race / data-corruption / caller-contract defect.
-  - 🟡 CONDITIONAL PASS — no HIGH blocker but a credible MEDIUM risk remains.
-  - 🟢 PASS — no HIGH/MEDIUM safety/security findings.
-    LOW-confidence and taste-level (YAGNI/style) findings never block.
-- `changed_contracts` is optional but include any nullability / error / behavior
-  drift that callers must honor; leave empty if none.
-- Do **not** invent defects from mere unusual patterns; the JSON issue line must
-  name the concrete path from changed code to impact.
-- Keep JSON valid — no markdown fences inside string values, escape quotes.
+## 🎯 Field Guidelines for Findings
+
+1. **Confidence (`[HIGH]`, `[MEDIUM]`, `[LOW]`)**:
+   - `[HIGH]`: Deterministic crash, leak, race, security flaw, or caller contract break on production path. (Always flips verdict to 🔴 BLOCKED).
+   - `[MEDIUM]`: Strong evidence of an edge-case bug, concurrency risk, or unhandled contract drift. (Flips verdict to 🟡 CONDITIONAL PASS).
+   - `[LOW]`: Plausible observation, YAGNI over-engineering, or simplification. Never blocks alone.
+2. **Issue**: One crisp sentence naming the concrete defect and its direct impact.
+3. **Why (Required for MEDIUM and HIGH)**: Explains the causal chain (e.g. "Caller `Foo.java:45` calls this without null check, expecting non-null return"). This ensures the agent fixes the issue with full comprehension rather than blind text replacement.
+4. **Fix**: The most conservative, minimal, battle-tested fix.
+5. **Trace**: Optional short pointer (caller file:line, symbol, or probe) to reproduce/verify.
+
+---
+
+## 🔍 On-Demand Deep Dive (Optional)
+
+Do **NOT** dump full diffs, code blocks, or evidence essays by default.  
+Only if the user explicitly asks for details (e.g., *"Show details for #1"*, *"Why does #2 fail?"*), expand finding N to show:
+- Exact vulnerable code snippet
+- Exact recommended replacement snippet
+- Detailed caller blast-radius trace

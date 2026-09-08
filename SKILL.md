@@ -190,30 +190,25 @@ Use when no HIGH/MEDIUM safety or security findings remain. LOW-confidence obser
 
 ## 📋 Step 3: Produce the Report
 
-Follow `references/report_template.md` exactly. Localize the human-facing prose
-to the user's language per policy, but keep the machine tokens stable.
+Follow `references/report_template.md` (The Golden Balance format).  
+Emit a **dense, structured Markdown report** that the human reviewer can scan in **3 to 5 seconds** and the agent can parse to execute targeted fixes:
 
-**The default report is intentionally minimal — three blocks only:**
-1. **Verdict + 1-line human summary.**
-2. **A single valid JSON `findings` block**, consumed verbatim by the agent for
-   the next step. Zero findings → render `Solid & Lean. Clean to ship.`
-3. **Next-action gate** — always ask, never end silently. Render the labels in
-   the **user's own language**; only the `[n]` tokens are invariant (e.g. Korean
-   UI: `[1] 수정 진행 [2] 여기서 마무리 [3] 상세 열람`). A bare cross-check must
-   hand the decision back to the human.
+1. **Dynamic Localization**:
+   - The report's human-facing prose, section headers, explanations, and next-action prompt must automatically match the **language of the user's prompt** (e.g. Korean if asked in Korean, English if asked in English).
+   - Machine tokens (`BLOCKED`, `CONDITIONAL PASS`, `PASS`, `[HIGH]`, `[MEDIUM]`, `[LOW]`, tags, file paths, code symbols) remain invariant.
 
-**Finding shape (see report_template):** every finding carries `tag`,
-`confidence`, `location`, a 1-line `issue`, a 1-line `fix`, and `blocks`. When
-`confidence` is **MEDIUM or HIGH** (a finding that could actually drive a fix)
-also include **`why`** — one dense line of the causal chain / evidence that makes
-it a real defect — and, where useful, a short **`trace`** pointer so the agent
-can reproduce it. LOW/taste-level findings stay at `issue` + `fix` with no `why`.
+2. **Report Structure**:
+   - **Verdict + 1-Line Summary**: Quick verdict badge (`🔴 BLOCKED | 🟡 CONDITIONAL PASS | 🟢 PASS`) and the single most critical takeaway.
+   - **Actionable Findings**: Numbered list of findings:
+     - Header: `N. **[CONFIDENCE] tag** (filepath:line)`
+     - `- **Issue**: <1 line — concrete failure path>`
+     - `- **Why**: <1 line — causal chain and proof connecting the change to runtime crash/vulnerability (required for MEDIUM+)>`
+     - `- **Fix**: <1 line — minimal conservative fix>`
+     - `- **Trace**: <optional short pointer to caller site or probe>`
+   - **Zero Findings Case**: If `🟢 PASS` with zero findings, output `Solid & Lean. Clean to ship.` (or localized equivalent).
+   - **Next Step Prompt**: A natural, concise prompt in the user's language asking which finding to fix (e.g. *"Tell me which numbers to fix (e.g. 'Fix #1'), or say 'looks good, merge' if intended."*).
 
-Why this matters: if the human picks **[1]** the agent edits **with
-understanding**, not by blindly pasting the `fix` string. A MEDIUM carrying only
-a bare `fix` invites a context-free edit.
+3. **On-Demand Expansion Only**:
+   - Do **NOT** dump full diffs, vulnerable code blocks, or evidence essays by default.
+   - Expand code snippets and caller traces only when the human explicitly asks (e.g. *"Show details for #1"*).
 
-Blast/caller detail, vulnerable code, and full evidence are expanded **only on
-request** (the `[3]` drill-down), not in the default output.
-
-Do not add filler prose or reproduce the diff.

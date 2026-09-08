@@ -95,32 +95,36 @@ ln -s /path/to/cross-check ~/.gemini/antigravity/skills/cross-check
 ## 📊 Sample Output
 
 ```markdown
-# 🛡️ Cross-Check Security & Stability Review
+# 🛡️ Cross-Check Review
 
-- **Target Scope**: Working Tree (staged + unstaged)
-- **Audited Files**: 2 files
-- **Scoreboard**: 🚨 1 Critical | ⚠️ 1 Warning | 🧹 1 YAGNI | net: -45 lines possible
-- **Confidence**: HIGH 1 | MEDIUM 2 | LOW 1
 - **Verdict**: 🔴 BLOCKED
+- **Summary**: Session map concurrent write causes daemon panic; token timeout returns null causing caller NPE.
+- **Scope**: Working Tree (2 files audited)
 
-## ⚡ Quick Scan
-- `session_manager.go:L42: race: [HIGH] concurrent write to activeSessions map. Protect with sync.RWMutex.`
-- `AuthService.java:L89: caller: [MEDIUM] timeout now returns null; caller L91 dereferences it. Guard or preserve the contract.`
-- `RuleEngine.ts:L12-70: yagni: [LOW] abstraction appears to have one consumer. Verify DI/test/plugin boundary before removing.`
+---
 
-## 🚨 Critical Issues
-### 1. [session_manager.go:L42] Concurrent Map Write Panic
-- **Confidence**: HIGH
-- **Blast Radius**: High concurrent traffic can trigger a Go runtime panic and terminate the daemon.
-- **Conservative Fix**:
-```go
-m.mu.Lock()
-m.activeSessions[id] = session
-m.mu.Unlock()
+### 🚨 Actionable Findings
+
+1. **[HIGH] race:concurrent-map-write** (`session_manager.go:42`)
+   - **Issue**: Concurrent write to activeSessions map triggers Go runtime fatal panic.
+   - **Why**: Mutated across HTTP goroutines without synchronization; crashes the daemon under load.
+   - **Fix**: Wrap map accesses with `sync.RWMutex`.
+
+2. **[MEDIUM] caller:nullable-drift** (`AuthService.java:89`)
+   - **Issue**: Token validation now returns null on timeout.
+   - **Why**: Caller `SecurityFilter.java:45` directly calls `token.isValid()` without null check.
+   - **Fix**: Return `false` instead of `null` on timeout.
+
+3. **[LOW] yagni:single-impl-wrapper** (`RuleEngine.ts:12`)
+   - **Issue**: AbstractRuleEngine has only one implementation.
+   - **Fix**: Inline the class unless plugin/DI extension is imminent.
+
+---
+
+👉 **Next Step**: Tell me which finding(s) to fix (e.g. "Fix #1 and #2"), or say "proceed to merge" if intended.
 ```
-```
 
-The same report is rendered in the user's language when the review is requested in another language. Stable verdicts, tags, paths, and code remain unchanged.
+The report dynamically localizes to the user's conversational language (Korean, English, Japanese, etc.) while preserving technical tokens, tags, and code paths unchanged.
 
 ---
 

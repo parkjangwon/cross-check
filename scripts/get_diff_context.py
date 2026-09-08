@@ -496,6 +496,112 @@ def get_untracked_files_diff(git_root):
 
     return untracked_diffs, skipped_untracked
 
+
+# --- Review-profile helpers (LLM-audit oriented) -----------------------------
+#
+# cross-check does NOT ask the runtime model whether a change is "abnormal" —
+# that decision belongs to the reviewing agent, which already has the full PR /
+# conversation context. Instead the extractor produces a concise *change
+# profile* at the top of the report. The reviewing agent uses it to answer
+# "is this an out-of-band commit worth reading in full?" before details stream.
+# A commit audit defaults to showing everything; the numeric line caps only
+# bite when --strict-cap is passed (or for iterative working-tree edits).
+
+def _ext_of(path):
+    _, ext = os.path.splitext(path)
+    return ext.lower()
+
+def summarize_change_kind(file_path, n_add, n_del):
+    """
+    Coarse, extension-based classification of what a changed file *mostly is*,
+    for the review profile. Not a substitute for reading it — only a signal the
+    reviewing agent can use to triage breadth (e.g. "mostly lockfiles/tests").
+    """
+    ext = _ext_of(file_path)
+    base = os.path.basename(file_path).lower()
+
+    if ext in {".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.tsx",
+               ".t.ts"} or ".test." in base or ".spec." in base or base.startswith("test_"):
+        return "test"
+    if ext in {".css", ".scss", ".less", ".html"} or ext in {".htm", ".css"}:
+        return "style"
+    if ext in NON_CODE_EXTENSIONS:
+        return "config/docs/data"
+    if ext in {".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+               ".conf", ".env", ".sql", ".graphql", ".prisma", ".lock"}:
+        return "config/docs/data"
+    if n_del > 3 * n_add and n_del > 20:   # heavily deletion-heavy
+        return "refactor/del"
+    if n_add == 0 and n_del == 0:
+        return "meta-only"
+    return "logic"
+
+def compute_diff_stats(filtered_files):
+    """
+    Return {path: (add, del, total_lines)} plus aggregate totals so main() can
+    decide upfront whether this change exceeds review caps.
+    """
+    stats = {}
+    total_add = total_del = total_lines = 0
+    for path, content in filtered_files.items():
+        lines = content.splitlines()
+        adds = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
+        dels = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+        stats[path] = (adds, dels, len(lines))
+        total_add += adds
+        total_del += dels
+        total_lines += len(lines)
+    return stats, total_add, total_del, total_lines
+
+def build_commit_profile(filtered_files, stats, total_add, total_del, total_lines,
+                         blast_radius, target_desc, audit_mode, strict_cap=False):
+    """
+    One concise, mostly-machine-readable header block a reviewing agent can
+    triage immediately. Highlights breadth/danger signals without dumping diffs.
+    """
+    n_files = len(filtered_files)
+    kinds = {}
+    for path, (adds, dels, _tl) in stats.items():
+        k = summarize_change_kind(path, adds, dels)
+        kinds[k] = kinds.get(k, 0) + 1
+    kind_summary = ", ".join(f"{v} {k.replace('config/docs/data', 'config')}"
+                             for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]))
+
+    # Distinct caller files across all blast-radius entries (danger signal).
+    broad_syms = 0
+    caller_files_est = 0
+    if blast_radius:
+        broad_syms = sum(1 for d in blast_radius.values() if d.get("broad"))
+        caller_files_est = sum(d.get("distinct_files", 0) for d in blast_radius.values())
+
+    if audit_mode and total_lines:
+        if strict_cap:
+            note = (f"\n- **Audit policy**: whole change is {total_lines} diff lines / "
+                    f"{n_files} file(s); --strict-cap is set, so output is capped. "
+                    f"If you judge this change 'abnormal' and want to review it in "
+                    f"full, re-run with --no-truncate or isolate files with --file.")
+        else:
+            note = (f"\n- **Audit policy**: commit/range audits default to showing the "
+                    f"full change. This one is {total_lines} diff lines across "
+                    f"{n_files} file(s). Triage breadth from this profile; if you judge "
+                    f"it clearly out-of-band (e.g. pure restructure/config churn) you "
+                    f"may narrow to key files with --file instead of reading every line.")
+    else:
+        note = ("\n- **Audit policy**: working-tree view; line caps are applied to "
+                "keep the loop cheap. Re-run with --no-truncate for the entire change.")
+
+    return (
+        f"# Cross-Check Change Profile\n"
+        f"- **Target**: {target_desc}\n"
+        f"- **Files**: {n_files} ({total_add}+/ {total_del}-, ~{total_lines} diff lines)\n"
+        f"- **Shape**: {kind_summary or 'unknown'}"
+        + (f"\n- **Blast hints**: {len(blast_radius) if blast_radius else 0} candidate symbol(s), "
+           f"{broad_syms} broadly-referenced, ~{caller_files_est} caller-file mention(s)" if blast_radius else "")
+        + note
+        + f"\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract token-efficient git diff context for conservative enterprise code verification."
@@ -527,6 +633,13 @@ def main():
     parser.add_argument(
         "--no-truncate", "--all", action="store_true",
         help="Disable diff truncation limits"
+    )
+    parser.add_argument(
+        "--strict-cap", action="store_true",
+        help="Keep exact numeric truncation (per-file 400 / total 1200 lines by "
+             "default) even for --commit/--range audits. Without this, an audit "
+             "that exceeds the caps is shown in full by default so a reviewing "
+             "agent can triage the whole change."
     )
     parser.add_argument(
         "--skip-callers", action="store_true",
@@ -564,77 +677,96 @@ def main():
         print(f"## [cross-check] No changes found for: {target_desc}")
         sys.exit(0)
 
-    # Output structured summary
-    print(f"# Cross-Check Diff Context")
-    print(f"- **Target**: {target_desc}")
-    print(f"- **Modified Files Target**: {len(filtered_files)} file(s)")
-    if skipped_files:
-        print(f"- **Excluded Noise Files**: {len(skipped_files)} file(s) (lockfiles, bundles, binaries)")
-    print()
-
-    print("## Target Files Summary")
-    for file_path in sorted(filtered_files.keys()):
-        content = filtered_files[file_path]
-        additions = sum(1 for l in content.splitlines() if l.startswith("+") and not l.startswith("+++"))
-        deletions = sum(1 for l in content.splitlines() if l.startswith("-") and not l.startswith("---"))
-        print(f"- `{file_path}` (+{additions}, -{deletions})")
-    print()
+    # --- Gather stats + blast once, then print a triage-first report --------
+    stats, total_add, total_del, total_lines = compute_diff_stats(filtered_files)
+    audit_mode = bool(args.commit or args.range)
 
     # Discover blast radius / caller impact
+    blast_radius = {}
     if not getattr(args, "skip_callers", False):
         blast_radius = find_blast_radius(git_root, filtered_files)
-        if blast_radius:
-            print("## 🎯 Blast Radius & Caller Impact Candidates")
-            print("> The following modified methods were found to have external callers across the codebase.")
-            print("> Audit these call sites for return contract drift, unhandled nulls, or broken assumptions:\n")
-            for sym, data in blast_radius.items():
-                print(f"### Method `{sym}()` (defined in `{data['source_file']}`)")
-                if data.get("broad"):
-                    # Overbroad name: skip per-file samples, they'd drown the report.
-                    print(f"- Broadly referenced across the codebase "
-                          f"({data['distinct_files']} file(s) / {data['total_callers']} mention(s)); "
-                          f"likely a common/shared name. Not listing individual callers — "
-                          f"this name is too generic to trace a contract drift to a single caller.")
-                    print()
-                    continue
-                print(f"- Found {data['total_callers']} external call site(s) across {data['distinct_files']} file(s):")
-                for caller_file, line_no, snippet in data["samples"]:
-                    print(f"  - `{caller_file}:L{line_no}`: `{snippet}`")
-                if data["total_callers"] > len(data["samples"]):
-                    remaining = data["total_callers"] - len(data["samples"])
-                    print(f"  - *... and {remaining} more caller(s). (Use `git grep -w \"{sym}\"` for all)*")
+
+    # Triage-first: the review profile lands at the very top so the reviewing
+    # agent (LLM) can judge "worth a full read?" before any diff detail streams.
+    print(build_commit_profile(
+        filtered_files, stats, total_add, total_del, total_lines,
+        blast_radius, target_desc, audit_mode, strict_cap=bool(args.strict_cap)
+    ))
+    if skipped_files:
+        print(f"- **Excluded Noise Files**: {len(skipped_files)} file(s) (lockfiles, bundles, binaries)")
+    print(f"\n## Target Files Summary")
+    for file_path in sorted(filtered_files.keys()):
+        adds, dels, _tl = stats[file_path]
+        print(f"- `{file_path}` (+{adds}, -{dels})")
+    print()
+
+    if blast_radius:
+        print("## 🎯 Blast Radius & Caller Impact Candidates")
+        print("> The following modified methods were found to have external callers across the codebase.")
+        print("> Audit these call sites for return contract drift, unhandled nulls, or broken assumptions:\n")
+        for sym, data in blast_radius.items():
+            print(f"### Method `{sym}()` (defined in `{data['source_file']}`)")
+            if data.get("broad"):
+                # Overbroad name: skip per-file samples, they'd drown the report.
+                print(f"- Broadly referenced across the codebase "
+                      f"({data['distinct_files']} file(s) / {data['total_callers']} mention(s)); "
+                      f"likely a common/shared name. Not listing individual callers — "
+                      f"this name is too generic to trace a contract drift to a single caller.")
                 print()
+                continue
+            print(f"- Found {data['total_callers']} external call site(s) across {data['distinct_files']} file(s):")
+            for caller_file, line_no, snippet in data["samples"]:
+                print(f"  - `{caller_file}:L{line_no}`: `{snippet}`")
+            if data["total_callers"] > len(data["samples"]):
+                remaining = data["total_callers"] - len(data["samples"])
+                print(f"  - *... and {remaining} more caller(s). (Use `git grep -w \"{sym}\"` for all)*")
+            print()
 
     print("## Diff Details")
+
+    # --- Truncation policy ----------------------------------------------------
+    # Commit/range audits default to showing the *full* diff so a reviewing agent
+    # can triage the whole change (out-of-band size alone is not "abnormal" — the
+    # LLM decides that from the profile above). Numeric caps only bite when the
+    # user opts into them (--strict-cap) or for iterative working-tree runs.
+    truncate = (args.no_truncate is False) and (args.strict_cap or not audit_mode)
     total_emitted_lines = 0
     budget_exhausted = False
 
     for file_path in sorted(filtered_files.keys()):
         content = filtered_files[file_path]
         lines = content.splitlines()
-        total_lines = len(lines)
+        file_total = len(lines)
 
         print(f"### File: `{file_path}`")
 
-        if not args.no_truncate and budget_exhausted:
+        if truncate and budget_exhausted:
             print(f"> *[Diff truncated: Total token budget ({args.max_total_lines} lines) reached. Use `--file {file_path}` to inspect this file directly.]*\n")
             continue
 
-        if not args.no_truncate and total_lines > args.max_file_lines:
+        if truncate and file_total > args.max_file_lines:
             truncated_lines = lines[:args.max_file_lines]
             print("```diff")
             print("\n".join(truncated_lines))
-            print(f"\n# ... [Diff truncated: showing first {args.max_file_lines} of {total_lines} lines. Run with --no-truncate for full diff.] ...")
+            print(f"\n# ... [Diff truncated: showing first {args.max_file_lines} of {file_total} lines. Pass --strict-cap or --no-truncate explicit; or --file for this file.] ...")
             print("```\n")
             total_emitted_lines += args.max_file_lines
         else:
             print("```diff")
             print(content)
             print("```\n")
-            total_emitted_lines += total_lines
+            total_emitted_lines += file_total
 
-        if not args.no_truncate and total_emitted_lines >= args.max_total_lines:
+        if truncate and total_emitted_lines >= args.max_total_lines:
             budget_exhausted = True
+
+    # If an audit exceeded caps but we still showed it in full, say so clearly —
+    # the reviewer should know it was a forced full read for a large change.
+    if audit_mode and not truncate and total_lines > args.max_total_lines and not args.no_truncate:
+        print(f"> *[Note: this commit/range diff ({total_lines} lines) exceeded the "
+              f"{args.max_total_lines}-line audit cap but was shown in full (default "
+              f"for audits). Re-run with --strict-cap to cap, or pass "
+              f"`--file <path>` to isolate a file.]*")
 
 if __name__ == "__main__":
     main()

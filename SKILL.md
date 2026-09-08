@@ -68,9 +68,25 @@ Supported flags:
 --commit <HASH>          Specific commit inspection
 --range <BASE>..<HEAD>   Branch or commit range
 --file <PATH>            Target a specific file
---no-truncate            Disable default diff limits
+--no-truncate            Disable all numeric diff limits
+--strict-cap             Keep numeric caps even for --commit/--range audits
 --skip-callers           Skip caller blast-radius discovery
 ```
+
+> **Audit scope policy (read this before running against a commit/range):**
+> For `--commit` / `--range` the extractor defaults to showing the **entire**
+> change — it does not silently cut a big single commit at the token caps,
+> because *size alone is not "abnormal"*. Each run instead prints a compact
+> **Change Profile** at the top (files, +/- totals, coarse shape breakdown, and
+> blast hints). Whether a change genuinely warrants a full line-by-line read is
+> **your call as the reviewing agent**, not the extractor's: judge the profile,
+> then either read the whole diff (the default output) or narrow to specific
+> files with `--file <path>` when the profile shows mostly churn/config/tests.
+> Pass `--strict-cap` only when you explicitly want numeric caps to bite anyway
+> (e.g. an unusually enormous diff you want kept short).
+>
+> Working-tree runs (default, `--staged`) keep numeric caps on so the develop
+> loop stays cheap; pass `--no-truncate` there for the whole change.
 
 Fallback:
 

@@ -206,5 +206,59 @@ diff --git a/package-lock.json b/package-lock.json
             self.assertEqual(len(radius["process"]["samples"]), 2)
 
 
+class ReviewProfileTests(unittest.TestCase):
+    """Coverage for the LLM-audit profile helpers (review-profile extraction)."""
+
+    SAMPLE = {
+        "a/logic.ts": (
+            "diff --git a/a/logic.ts b/a/logic.ts\n"
+            "--- a/a/logic.ts\n+++ b/a/logic.ts\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def f(x){\n-  return x+1\n+  return x+100\n}\n"
+        ),
+    }
+
+    def test_compute_diff_stats_counts_add_del_lines(self):
+        stats, ta, td, tl = module.compute_diff_stats(self.SAMPLE)
+        path = "a/logic.ts"
+        self.assertIn(path, stats)
+        a, d, n = stats[path]
+        self.assertEqual(a, 1)   # one + return
+        self.assertEqual(d, 1)   # one - return
+        self.assertEqual(n, 8)   # whole unified blob lines
+        self.assertEqual(ta, 1)
+        self.assertEqual(td, 1)
+        self.assertEqual(tl, 8)
+
+    def test_summarize_change_kind_logic_and_test_and_config(self):
+        self.assertEqual(module.summarize_change_kind("src/a.test.ts", 5, 2), "test")
+        self.assertEqual(module.summarize_change_kind("tests/test_x.py", 5, 2), "test")
+        self.assertEqual(module.summarize_change_kind("cfg.yaml", 5, 2), "config/docs/data")
+        self.assertEqual(module.summarize_change_kind("README.md", 5, 0), "config/docs/data")
+        self.assertEqual(module.summarize_change_kind("src/app.ts", 5, 2), "logic")
+        # meta-only when nothing added/deleted
+        self.assertEqual(module.summarize_change_kind("x.ts", 0, 0), "meta-only")
+
+    def _profile_of(self, files, audit, strict):
+        s, ta, td, tl = module.compute_diff_stats(files)
+        return module.build_commit_profile(
+            files, s, ta, td, tl, {}, "TestTarget", audit, strict_cap=strict
+        )
+
+    def test_profile_audit_default_wording(self):
+        p = self._profile_of(self.SAMPLE, audit=True, strict=False)
+        self.assertIn("default to showing the", p)
+        self.assertIn("Files", p)
+        self.assertIn("Target", p)
+
+    def test_profile_strict_wording(self):
+        p = self._profile_of(self.SAMPLE, audit=True, strict=True)
+        self.assertIn("--strict-cap is set", p)
+
+    def test_profile_working_tree_wording(self):
+        p = self._profile_of(self.SAMPLE, audit=False, strict=False)
+        self.assertIn("working-tree", p)
+
+
 if __name__ == "__main__":
     unittest.main()

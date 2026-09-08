@@ -15,15 +15,15 @@ AI vibe-coding produces plausible code, but routinely introduces:
 - **Swallowed Errors**: Empty catch/error blocks and lost transaction rollbacks.
 - **Over-Engineering Bloat**: AI-generated design patterns, single-implementation interfaces, and unneeded dependencies for trivial tasks.
 
-**`cross-check` is not a full-scan SAST.** It performs a fast, conservative audit strictly on your **`git diff`** and its direct callers/callees against **6 Universal Enterprise Invariants**.
+**`cross-check` is not a full-scan SAST.** It performs a fast, conservative audit strictly on your **`git diff`** and its external caller sites against **7 Universal Enterprise Invariants**.
 
 ---
 
 ## 📦 Quick Install
 
-### Via `npx skill.sh` (Recommended)
+### Via `skills.sh` (Recommended)
 ```bash
-npx skill.sh add parkjangwon/cross-check
+npx skills add parkjangwon/cross-check -g
 ```
 
 ### Manual Symlink
@@ -39,13 +39,14 @@ ln -s /path/to/cross-check ~/.gemini/antigravity/skills/cross-check
 
 ---
 
-## 🧭 The 6 Universal Invariants
+## 🧭 The 7 Universal Invariants
 
 | Tag | Category | What We Catch |
 | :--- | :--- | :--- |
 | `leak:` | **Resource Lifecycle** | FD, socket, DB connection, thread/goroutine, or listener leaks on any exit path. |
 | `race:` | **Concurrency** | Unprotected shared state, non-atomic updates, lock contention during I/O. |
 | `npe:` / `crash:` | **Memory & Pointer** | Null/nil dereferences, array out-of-bounds, unsafe unboxing, raw casts. |
+| `caller:` | **Blast Radius** | Caller contract drift, unhandled null returns or uncaught errors at call sites. |
 | `swallow:` | **Error Integrity** | Silently ignored exceptions, lost root-cause traces, missing transaction rollbacks. |
 | `sec:` | **Trust Boundary** | SQL/command injection, path traversal, hardcoded secrets, plain PII in logs. |
 | `yagni:` | **Over-Engineering** | Single-impl interfaces, premature design patterns, unnecessary dependencies. |

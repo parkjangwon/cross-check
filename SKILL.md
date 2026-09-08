@@ -83,6 +83,13 @@ For every file in the diff, evaluate against the universal invariants in `refere
    - Was an external dependency added for simple logic that the standard library can do in 3 lines?
    - Is there speculative code built for hypothetical "future requirements"?
 
+7. **Blast Radius & Caller Contract Audit (`caller:`)**
+   - Inspect the `## 🎯 Blast Radius & Caller Impact Candidates` section from the diff output.
+   - **Nullable Return**: Did a method change to return `null`/`nil`/`undefined`? Check if callers immediately dereference without a null guard.
+   - **Precondition Drift**: Did a method add stricter parameter checks? Will existing callers that pass edge cases fail?
+   - **Error Drift**: Did a method start throwing a new exception or returning a new error status that callers do not catch?
+   - **Sibling Callers**: If fixing a bug for caller A, are sibling callers B and C still passing bad data or broken?
+
 ---
 
 ## 📋 Step 3: Produce the Report

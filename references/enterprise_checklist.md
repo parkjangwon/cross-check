@@ -84,6 +84,17 @@ Every code modification must satisfy these 6 universal invariants regardless of 
 
 ---
 
+### 7. Blast Radius & Caller Contract Drift (`caller:`)
+*Applies to: any method or function whose signature, return value, or side-effects have changed.*
+
+- **Nullable Return Drift**: Did the modified method change to return `null`, `nil`, or `undefined` (e.g., on error or timeout)? Do existing callers immediately invoke methods on the returned value without a null check? (Triggers NPE in caller).
+- **Precondition Tightening**: Did the method introduce stricter input validation (e.g., non-null, minimum length, non-empty)? Will existing callers that pass edge cases crash or fail silently?
+- **Error & Exception Drift**: Did the method start throwing a new exception or returning a new error status that callers do not catch?
+- **Sibling Blindness**: If this modification fixes a bug experienced by caller A, are sibling callers B and C still broken or passing outdated argument formats?
+- **Side-Effect / State Mutation Drift**: Did the method change whether it mutates input arguments in place or relies on a specific execution thread/context?
+
+---
+
 ## 🏷️ Standard Tag Reference
 
 Use these concise tags in the Quick Scan section:
@@ -93,6 +104,7 @@ Use these concise tags in the Quick Scan section:
 | `crash:` / `panic:` | Stability | Process crash, uncaught exception, panic, out-of-bounds |
 | `leak:` | Resource | FD, socket, DB connection, memory, listener leak |
 | `npe:` / `nil:` | Safety | Null/Nil pointer dereference, undefined property access |
+| `caller:` | Blast Radius | Caller contract drift, unhandled null return at call site |
 | `race:` | Concurrency | Race condition, non-atomic operation, deadlock hazard |
 | `swallow:` | Error Handling | Silently ignored error/exception, lost cause, missing rollback |
 | `sec:` / `sqli:` / `xss:` | Security | Injection, path traversal, auth bypass, secret in log |

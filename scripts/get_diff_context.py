@@ -16,6 +16,7 @@ Excludes lockfiles, minified bundles, build artifacts, and binary files.
 import argparse
 import fnmatch
 import os
+import re
 import subprocess
 import sys
 
@@ -188,6 +189,146 @@ def is_binary_file(filepath):
     except Exception:
         return True
 
+COMMON_EXCLUDED_METHOD_NAMES = {
+    # Control flow & keywords
+    "if", "for", "while", "switch", "catch", "init", "main", "toString", "equals",
+    "hashCode", "constructor", "run", "test", "get", "set", "true", "false", "null",
+    "return", "this", "super", "export", "default", "class", "interface", "struct",
+    "enum", "type", "void", "string", "int", "boolean", "new", "lambda", "render",
+    # Framework lifecycle
+    "created", "mounted", "updated", "destroyed", "beforeCreate", "beforeMount",
+    "onMounted", "onUnmounted", "computed", "watch", "setup", "data", "props",
+    # Language builtins & universal utilities
+    "range", "len", "open", "print", "close", "read", "write", "send", "recv",
+    "map", "filter", "reduce", "list", "dict", "str", "float", "tuple", "any", "all",
+    "log", "info", "warn", "error", "debug", "trace", "parse", "format", "build",
+    "push", "pop", "shift", "unshift", "slice", "splice", "join", "split", "find",
+    "includes", "indexOf", "lastIndexOf", "forEach", "some", "every", "sort"
+}
+
+def extract_enclosing_function_from_file(file_path, line_number, func_patterns):
+    """Scan upward from line_number in source file to find enclosing function definition."""
+    if not os.path.isfile(file_path):
+        return None
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        # Scan upward up to 50 lines
+        start = max(0, line_number - 1)
+        for idx in range(start, max(-1, start - 50), -1):
+            if idx < len(lines):
+                line = lines[idx]
+                for pat in func_patterns:
+                    m = pat.search(line)
+                    if m:
+                        for g in m.groups():
+                            if g and g not in COMMON_EXCLUDED_METHOD_NAMES and len(g) > 2:
+                                return g
+    except Exception:
+        pass
+    return None
+
+def extract_modified_symbols(git_root, file_path, diff_content):
+    """Extract candidate function/method names modified in diff."""
+    candidates = set()
+
+    hunk_header_re = re.compile(r"^@@\s+-([0-9]+)(?:,[0-9]+)?\s+\+([0-9]+)(?:,[0-9]+)?\s+@@\s*(.*)$")
+    func_patterns = [
+        re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z0-9_]{3,})\s*\("),                       # Python
+        re.compile(r"^func\s+(?:\([^)]+\)\s+)?([A-Za-z0-9_]{3,})\s*\("),                     # Go
+        re.compile(r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]{3,})"),   # Rust
+        re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]{3,})\s*\("),    # JS/TS func
+        re.compile(r"^\s*(?:const|let|var)\s+([A-Za-z0-9_]{3,})\s*=\s*(?:async\s*)?\("),      # JS/TS arrow
+        re.compile(r"^\s*(?:[A-Za-z0-9_<>\[\],?]+\s+)+([A-Za-z0-9_]{3,})\s*\([^;]*$"),      # Java/C/C++
+    ]
+
+    full_path = os.path.join(git_root, file_path)
+
+    for line in diff_content.splitlines():
+        # Check hunk header
+        m_hunk = hunk_header_re.match(line)
+        if m_hunk:
+            header_tail = m_hunk.group(3).strip()
+            # 1. Look for function name directly in git header
+            words = re.findall(r"([A-Za-z0-9_]{3,})\s*\(", header_tail)
+            for w in words:
+                if w not in COMMON_EXCLUDED_METHOD_NAMES and len(w) > 2:
+                    candidates.add(w)
+
+            # 2. Scan upward in source file from hunk start line
+            hunk_start_line = int(m_hunk.group(2))
+            enclosing = extract_enclosing_function_from_file(full_path, hunk_start_line, func_patterns)
+            if enclosing:
+                candidates.add(enclosing)
+
+        # Check all lines in diff (both modified and immediate context)
+        if not line.startswith(("+++", "---")):
+            code_line = line[1:] if line.startswith(("+", "-", " ")) else line
+            for pat in func_patterns:
+                m = pat.search(code_line)
+                if m:
+                    for g in m.groups():
+                        if g and g not in COMMON_EXCLUDED_METHOD_NAMES and len(g) > 2:
+                            candidates.add(g)
+
+    return sorted(candidates)
+
+def find_blast_radius(git_root, filtered_files, max_symbols=5, max_callers_per_sym=8):
+    """Find external caller sites in the repository for modified methods."""
+    symbol_to_source = {}
+    for file_path, diff_content in filtered_files.items():
+        symbols = extract_modified_symbols(git_root, file_path, diff_content)
+        for sym in symbols:
+            if sym not in symbol_to_source:
+                symbol_to_source[sym] = file_path
+
+    if not symbol_to_source:
+        return {}
+
+    blast_radius = {}
+    tested_count = 0
+
+    for sym, source_file in symbol_to_source.items():
+        if tested_count >= max_symbols:
+            break
+
+        # Run git grep to find usages across repo
+        try:
+            grep_res = subprocess.run(
+                ["git", "grep", "-n", "-w", sym],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=git_root
+            )
+            if grep_res.returncode != 0 or not grep_res.stdout.strip():
+                continue
+
+            lines = grep_res.stdout.splitlines()
+            callers = []
+            for l in lines:
+                parts = l.split(":", 2)
+                if len(parts) >= 3:
+                    caller_file, line_no, content = parts[0], parts[1], parts[2].strip()
+                    # Skip the definition file itself
+                    if caller_file == source_file:
+                        continue
+                    if is_ignored(caller_file):
+                        continue
+                    callers.append((caller_file, line_no, content))
+
+            if callers:
+                blast_radius[sym] = {
+                    "source_file": source_file,
+                    "total_callers": len(callers),
+                    "samples": callers[:max_callers_per_sym]
+                }
+                tested_count += 1
+        except Exception:
+            continue
+
+    return blast_radius
+
 def get_untracked_files_diff(git_root):
     """Detect untracked files and synthesize unified diffs for new text files."""
     try:
@@ -270,6 +411,10 @@ def main():
         "--no-truncate", "--all", action="store_true",
         help="Disable diff truncation limits"
     )
+    parser.add_argument(
+        "--skip-callers", action="store_true",
+        help="Skip searching repository for external callers of modified methods"
+    )
 
     args = parser.parse_args()
 
@@ -315,6 +460,23 @@ def main():
         deletions = sum(1 for l in content.splitlines() if l.startswith("-") and not l.startswith("---"))
         print(f"- `{file_path}` (+{additions}, -{deletions})")
     print()
+
+    # Discover blast radius / caller impact
+    if not getattr(args, "skip_callers", False):
+        blast_radius = find_blast_radius(git_root, filtered_files)
+        if blast_radius:
+            print("## 🎯 Blast Radius & Caller Impact Candidates")
+            print("> The following modified methods were found to have external callers across the codebase.")
+            print("> Audit these call sites for return contract drift, unhandled nulls, or broken assumptions:\n")
+            for sym, data in blast_radius.items():
+                print(f"### Method `{sym}()` (defined in `{data['source_file']}`)")
+                print(f"- Found {data['total_callers']} external call site(s) across repository:")
+                for caller_file, line_no, snippet in data["samples"]:
+                    print(f"  - `{caller_file}:L{line_no}`: `{snippet}`")
+                if data["total_callers"] > len(data["samples"]):
+                    remaining = data["total_callers"] - len(data["samples"])
+                    print(f"  - *... and {remaining} more caller(s). (Use `git grep -w \"{sym}\"` for all)*")
+                print()
 
     print("## Diff Details")
     total_emitted_lines = 0

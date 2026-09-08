@@ -19,6 +19,7 @@ Review responses must avoid generic filler prose and follow this standardized, h
 
 - `SecurityManager.java:L42-55: leak: InputStream not closed on IOException. try-with-resources, 1 line.`
 - `auth_service.go:L78: race: concurrent write to session map without mutex. sync.RWMutex or sync.Map.`
+- `AuthFilter.java:L89: caller: calls validateToken() which now returns null on timeout. NPE at caller L91.`
 - `UserDataHandler.ts:L110: npe: blind unboxing without null check. Guard before property access.`
 - `ConfigLoader.py:L35: swallow: except Exception ignores error. Log cause and propagate or rollback.`
 - `RuleEngine.java:L12-70: yagni: AbstractRuleEngine with 1 impl. Inline directly, delete 40 lines.`

@@ -136,6 +136,18 @@ The extractor automatically includes untracked files, filters common generated/b
 
 ---
 
+## 🧪 Regression Tests
+
+The extractor has a dependency-free regression suite covering diff filtering, modified-symbol extraction, caller candidates, untracked files, binary exclusion, and source/config boundaries.
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+GitHub Actions runs the suite on Python 3.9, 3.11, and 3.13 for every push and pull request. The tests are deliberately focused on the extractor's deterministic behavior; semantic security judgments remain the responsibility of the AI review layer.
+
+---
+
 ## 📚 Reference Guides
 
 - `references/enterprise_checklist.md` — universal invariants, confidence policy, and verdict mapping.

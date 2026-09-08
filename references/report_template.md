@@ -9,6 +9,10 @@ of reading a wall of prose. Effort goes into the *findings*, not the prose.
 - Human-facing prose is in the user's language; keep code/paths/identifiers and
   machine tokens (`BLOCKED`/`CONDITIONAL PASS`/`PASS`, `HIGH`/`MEDIUM`/`LOW`,
   tags like `leak:` `sec:` `caller:`) as-is. No translation subsystem.
+- The **next-action gate labels** are human-facing prose too — render `[1] [2]
+  [3]` descriptor text in the user's language (only the `[n]` numeric tokens stay
+  fixed). The sample blocks in this file are examples, not a fixed Korean/English
+  UI.
 - Localization never changes findings, verdict, or confidence.
 
 ## Output shape (STOP after these three blocks; no filler)
@@ -42,15 +46,22 @@ of reading a wall of prose. Effort goes into the *findings*, not the prose.
 ```
 
 ## ✅ Next action (ask, then stop — do not auto-act)
+Render the three labels in the **user's own language** (only the `[n]` numeric
+tokens are invariant). Example shown in English:
+
 ```
-조치를 선택하세요:
- [1] 수정 진행 — 위 findings 중 잡을 것 (사람/에이전트 지정)
- [2] 그대로 두고 여기서 마무리
- [3] 상세 열람 — 특정 finding의 근거/코드 전문
+[1] Apply fixes — pick which finding(s) to fix
+[2] Done — leave as-is here
+[3] Details — full evidence/code for a finding
 ```
+
+> If the user wrote in Korean, render it `[1] 수정 진행 [2] 여기서 마무리
+> [3] 상세 열람` — the labels are localized prose, `[n]` stays fixed.
+
 - If verdict is **BLOCKED**/**CONDITIONAL PASS**, the gate is mandatory.
 - If verdict is **PASS** and there are **zero findings**, skip Findings JSON and
-  just output: `Solid & Lean. Clean to ship.` then the gate ([2] default).
+  just output the localized `Solid & Lean. Clean to ship.`-equivalent, then the
+  gate ([2] default).
 - The gate belongs to **every** report — a bare cross-check should always hand
   the decision back, never end silently.
 

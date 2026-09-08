@@ -197,9 +197,10 @@ to the user's language per policy, but keep the machine tokens stable.
 1. **Verdict + 1-line human summary.**
 2. **A single valid JSON `findings` block**, consumed verbatim by the agent for
    the next step. Zero findings → render `Solid & Lean. Clean to ship.`
-3. **Next-action gate** — always ask, never end silently:
-   `[1] 수정 진행 [2] 여기서 마무리 [3] 상세 열람`.
-   A bare cross-check must hand the decision back to the human.
+3. **Next-action gate** — always ask, never end silently. Render the labels in
+   the **user's own language**; only the `[n]` tokens are invariant (e.g. Korean
+   UI: `[1] 수정 진행 [2] 여기서 마무리 [3] 상세 열람`). A bare cross-check must
+   hand the decision back to the human.
 
 **Finding shape (see report_template):** every finding carries `tag`,
 `confidence`, `location`, a 1-line `issue`, a 1-line `fix`, and `blocks`. When
